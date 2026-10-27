@@ -10,6 +10,15 @@ use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, IsIconic};
 
 const MAX_W: i32 = 512;
 
+const PW_CLIENTONLY: u32 = 1;
+const PW_RENDERFULLCONTENT: u32 = 2;
+
+// `PrintWindow` sits behind the crate's XPS feature, so declare it locally.
+#[link(name = "user32")]
+extern "system" {
+    fn PrintWindow(hwnd: HWND, hdc: HDC, flags: u32) -> i32;
+}
+
 pub struct WindowSnapshot {
     pub width: u32,
     pub height: u32,
@@ -126,11 +135,14 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
         SRCCOPY,
     )
     .as_bool();
-    SelectObject(pooled.mem.0, old);
-    let bgra = drawn
+    let mut bgra = drawn
         .then(|| read_pixels(pooled.mem.0, pooled.bmp.0, tw, th))
         .flatten()
         .filter(|pixels| !is_flat(pixels));
+    if bgra.is_none() {
+        bgra = print_window(h, pooled.mem.0, pooled.bmp.0, w, hgt, tw, th);
+    }
+    SelectObject(pooled.mem.0, old);
     POOL.with(|p| *p.borrow_mut() = Some(pooled));
 
     Some(WindowSnapshot {
@@ -140,12 +152,42 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
     })
 }
 
+/// Draws the window itself into `mem` when the screen grab returns nothing usable.
+unsafe fn print_window(
+    hwnd: HWND,
+    mem: HDC,
+    mem_bmp: HBITMAP,
+    w: i32,
+    hgt: i32,
+    tw: i32,
+    th: i32,
+) -> Option<Vec<u8>> {
+    let src = MemDc(CreateCompatibleDC(Some(mem)));
+    if src.0.is_invalid() {
+        return None;
+    }
+    let bmp = Bitmap(CreateCompatibleBitmap(mem, w, hgt));
+    if bmp.0.is_invalid() {
+        return None;
+    }
+    let old = SelectObject(src.0, HGDIOBJ(bmp.0 .0));
+    let printed = PrintWindow(hwnd, src.0, PW_CLIENTONLY | PW_RENDERFULLCONTENT) != 0;
+    SetStretchBltMode(mem, HALFTONE);
+    let drawn =
+        printed && StretchBlt(mem, 0, 0, tw, th, Some(src.0), 0, 0, w, hgt, SRCCOPY).as_bool();
+    SelectObject(src.0, old);
+    drawn
+        .then(|| read_pixels(mem, mem_bmp, tw, th))
+        .flatten()
+        .filter(|pixels| !is_flat(pixels))
+}
+
 /// A frame of one repeated pixel means the grab caught nothing usable.
 fn is_flat(bgra: &[u8]) -> bool {
-    let Some(first) = bgra.get(0..4) else {
+    let Some((first, rest)) = bgra.as_chunks::<4>().0.split_first() else {
         return true;
     };
-    bgra.chunks_exact(4).all(|px| px == first)
+    rest.iter().all(|px| px == first)
 }
 
 unsafe fn read_pixels(mem: HDC, bmp: HBITMAP, width: i32, height: i32) -> Option<Vec<u8>> {
