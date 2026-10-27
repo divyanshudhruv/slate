@@ -88,7 +88,7 @@ impl Controller {
                 self.hide_hover_preview();
             }
         }
-        let overlaying = self.overlaying();
+        let overlaying = self.menu_overlay();
         let active = if overlaying {
             None
         } else {

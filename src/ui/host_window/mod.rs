@@ -13,24 +13,19 @@ use gpui::{
 use crate::controller::{Cmd, Controller, SavedPrompt, TabInfo};
 use crate::core::{GroupId, TabId};
 use crate::ui::tab_bar::{SlateTab, SlateTabBar, TabDrag, TabIcon};
+use crate::ui::window_hwnd;
 
 mod art;
 mod dialogs;
-mod hover_card;
+pub(crate) mod hover_card;
 mod overlays;
 mod panels;
 mod title_bar;
 
 use art::{empty_state, grayscale_mark, key_cap};
-use hover_card::hover_card;
 
 fn hwnd_of(window: &Window) -> Option<isize> {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    let handle = HasWindowHandle::window_handle(window).ok()?;
-    match handle.as_raw() {
-        RawWindowHandle::Win32(win32) => Some(win32.hwnd.get()),
-        _ => None,
-    }
+    window_hwnd(window)
 }
 
 pub struct HostWindow {
@@ -108,6 +103,12 @@ impl Render for HostWindow {
             let ctrl = controller.clone();
             window.on_window_should_close(cx, move |window, cx| {
                 ctrl.update(cx, |c, cx| c.dispatch(Cmd::Shutdown, cx));
+                let own = window.window_handle().window_id();
+                for handle in cx.windows() {
+                    if handle.window_id() != own {
+                        let _ = handle.update(cx, |_, window, _| window.remove_window());
+                    }
+                }
                 window.remove_window();
                 false
             });
@@ -353,8 +354,7 @@ impl Render for HostWindow {
             || info.saved_menu_open
             || info.tab_menu.is_some()
             || info.renaming.is_some()
-            || info.saved_prompt.is_some()
-            || info.hover_preview.is_some();
+            || info.saved_prompt.is_some();
         let body = match (info.tabs.is_empty(), overlaying) {
             (true, _) => {
                 let caption = Caption::new("No windows yet").into_any_element();
@@ -388,17 +388,6 @@ impl Render for HostWindow {
 
         let toaster = self.controller.read(cx).toaster();
         let mut content = content.child(body);
-        if let Some(preview) = info.hover_preview.as_ref() {
-            let tab = info.tabs.iter().find(|t| t.id == preview.tab);
-            let on_hover = {
-                let ctrl = controller.clone();
-                move |hovered: &bool, _w: &mut Window, cx: &mut App| {
-                    let hovered = *hovered;
-                    ctrl.update(cx, |c, cx| c.dispatch(Cmd::PreviewCardHover(hovered), cx));
-                }
-            };
-            content = content.child(hover_card(cx, preview, tab, viewport, on_hover));
-        }
         if let Some(overlay) = title.picker_overlay {
             content = content.child(overlay);
         }

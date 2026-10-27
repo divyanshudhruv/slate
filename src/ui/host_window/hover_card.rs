@@ -2,35 +2,24 @@ use ely_gpui_component::primitives::Image;
 use ely_gpui_component::theme::{ActiveTheme, Radius, TextSize};
 use ely_gpui_component::typography::Ellipsis;
 use gpui::prelude::*;
-use gpui::{div, px, AnimationExt, App, Pixels, Size, Window};
+use gpui::{div, px, AnyElement, App, Window};
 
-use super::overlays::enter_animation;
 use crate::controller::{HoverPreview, TabInfo};
 
-pub(super) fn hover_card(
+pub(crate) const CARD_W: f32 = 224.0;
+const IMAGE_H: f32 = 126.0;
+const FOOTER_H: f32 = 40.0;
+pub(crate) const CARD_H: f32 = IMAGE_H + FOOTER_H;
+
+pub(crate) fn hover_card(
     cx: &App,
     preview: &HoverPreview,
     tab: Option<&TabInfo>,
-    viewport: Size<Pixels>,
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
-) -> gpui::AnyElement {
-    const CARD_W: f32 = 224.0;
-    const IMAGE_H: f32 = 126.0;
-    const CARD_H: f32 = IMAGE_H + 40.0;
-    const MARGIN: f32 = 8.0;
-    const GAP: f32 = 6.0;
+) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
     let rad_lg = theme.radius(Radius::Lg);
-    let (x, y, _w, h) = preview.anchor;
-    let vh = viewport.height.as_f32();
-    let left = x.min(viewport.width.as_f32() - CARD_W - MARGIN).max(MARGIN);
-    let below = y + h + GAP;
-    let top = if below + CARD_H <= vh - MARGIN {
-        below
-    } else {
-        (y - GAP - CARD_H).max(MARGIN)
-    };
 
     let image = match preview.image.clone() {
         Some(img) => Image::new(("host-hover-shot", 0usize), img)
@@ -64,7 +53,7 @@ pub(super) fn hover_card(
         .items_center()
         .gap_2()
         .px_2()
-        .py_1()
+        .h(px(FOOTER_H))
         .border_t_1()
         .border_color(colors.border)
         .when_some(tab.and_then(|t| t.icon.clone()), |row, icon| {
@@ -85,6 +74,7 @@ pub(super) fn hover_card(
 
     let card = div()
         .w(px(CARD_W))
+        .h(px(CARD_H))
         .rounded(rad_lg)
         .bg(colors.overlay)
         .border_1()
@@ -95,15 +85,9 @@ pub(super) fn hover_card(
 
     div()
         .id(("host-hover", preview.tab.0 as usize))
-        .absolute()
-        .left(px(left))
-        .top(px(top))
+        .w(px(CARD_W))
+        .h(px(CARD_H))
         .on_hover(on_hover)
-        .with_animation(
-            ("host-hover-anim", preview.tab.0 as usize),
-            enter_animation(cx),
-            |el, t| el.opacity(t),
-        )
         .child(card)
         .into_any_element()
 }

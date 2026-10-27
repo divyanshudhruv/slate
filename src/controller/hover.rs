@@ -7,10 +7,6 @@ use crate::core::TabId;
 use crate::win::capture_window;
 
 impl Controller {
-    pub(super) fn overlaying(&self) -> bool {
-        self.menu_overlay() || self.hover_preview.is_some()
-    }
-
     pub(super) fn menu_overlay(&self) -> bool {
         self.overlay
             || self.tab_menu_open
@@ -120,9 +116,9 @@ impl Controller {
             return;
         };
         let active = self.active_hwnd(group);
-        // Members get hidden as soon as the preview is up, and the grab below
-        // reads the live screen, so it is only valid while nothing overlays.
-        let visible = !self.overlaying();
+        // The grab reads the live screen, so it is only valid while no menu has
+        // hidden the members.
+        let visible = !self.menu_overlay();
         let mut image = self.snapshots.get(&hwnd).cloned();
         if visible && Some(hwnd) == active {
             if let Some(fresh) = capture_window(hwnd).and_then(render_snapshot) {

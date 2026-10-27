@@ -49,11 +49,17 @@ fn main() {
                 window_min_size: Some(size(px(640.0), px(420.0))),
                 ..Default::default()
             };
+            let host_controller = controller.clone();
             if let Err(err) = cx.open_window(options, move |_window, cx| {
-                cx.new(|cx| ui::HostWindow::new(controller, cx))
+                cx.new(|cx| ui::HostWindow::new(host_controller, cx))
             }) {
                 eprintln!("Slate: host window failed to open: {err:?}");
                 std::process::exit(1);
+            }
+            if std::env::var_os("SLATE_NO_POPUP").is_none()
+                && ui::PopupWindow::open(controller, cx).is_none()
+            {
+                eprintln!("Slate: popup window failed to open");
             }
 
             cx.activate(true);

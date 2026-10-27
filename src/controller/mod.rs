@@ -318,6 +318,14 @@ impl Controller {
         self.toaster.clone()
     }
 
+    pub fn host_hwnd(&self) -> Option<isize> {
+        self.host_hwnd
+    }
+
+    pub fn hover_preview(&self) -> Option<HoverPreview> {
+        self.hover_preview.clone()
+    }
+
     fn shutdown(&mut self) {
         self.end_pick();
         self.hide_hover_preview();
