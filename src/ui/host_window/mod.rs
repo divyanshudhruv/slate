@@ -37,9 +37,11 @@ pub struct HostWindow {
     rename_primed: Option<TabId>,
     saved_field: Option<Entity<TextInput>>,
     saved_primed: Option<SavedPrompt>,
+    picker_field: Option<Entity<TextInput>>,
     tab_scroll: ScrollHandle,
     _observe: Subscription,
     _observe_controller: Subscription,
+    _observe_picker: Option<Subscription>,
 }
 
 pub(super) struct HostCtx<'a> {
@@ -50,6 +52,8 @@ pub(super) struct HostCtx<'a> {
     pub(super) group: Option<GroupId>,
     pub(super) viewport: Size<gpui::Pixels>,
     pub(super) palette: ely_gpui_component::theme::Palette,
+    pub(super) picker_field: Option<Entity<TextInput>>,
+    pub(super) picker_query: String,
 }
 
 impl HostWindow {
@@ -66,9 +70,11 @@ impl HostWindow {
             rename_primed: None,
             saved_field: None,
             saved_primed: None,
+            picker_field: None,
             tab_scroll: ScrollHandle::new(),
             _observe,
             _observe_controller,
+            _observe_picker: None,
         }
     }
 }
@@ -122,6 +128,22 @@ impl Render for HostWindow {
 
         let info = self.controller.read_with(cx, |c, _| c.host_info());
         let group = info.group;
+
+        if self.picker_field.is_none() {
+            let field = cx.new(|cx| TextInput::new(window, cx).placeholder("Search windows"));
+            self._observe_picker = Some(cx.observe(&field, |_, _, cx| cx.notify()));
+            self.picker_field = Some(field);
+        }
+        let picker_field = self.picker_field.clone();
+        let picker_query = picker_field
+            .as_ref()
+            .map(|field| field.read_with(cx, |field, _| field.text().to_lowercase()))
+            .unwrap_or_default();
+        if !info.picker_open && !picker_query.is_empty() {
+            if let Some(field) = picker_field.clone() {
+                field.update(cx, |field, cx| field.set_text("", cx));
+            }
+        }
 
         let mut tab_bar = SlateTabBar::new("host-tabs");
         let palette = cx.theme().palette();
@@ -236,6 +258,8 @@ impl Render for HostWindow {
                 group,
                 viewport,
                 palette,
+                picker_field,
+                picker_query,
             };
             title_bar::build(&mut ctx, tab_bar, titlebar_h, bg, &self.tab_scroll)
         };

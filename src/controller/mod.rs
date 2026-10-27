@@ -53,6 +53,7 @@ pub struct Controller {
     tab_menu_open: bool,
     picker_open: bool,
     picker_rows: Vec<PickerRow>,
+    picker_picks: Vec<isize>,
     saved_sets: Vec<config::SavedSet>,
     saved_avail: HashMap<u64, usize>,
     saved_menu_open: bool,
@@ -113,6 +114,7 @@ impl Controller {
             tab_menu_open: false,
             picker_open: false,
             picker_rows: Vec::new(),
+            picker_picks: Vec::new(),
             saved_sets: config::load_sets().sets,
             saved_avail: HashMap::new(),
             saved_menu_open: false,
@@ -286,6 +288,7 @@ impl Controller {
             tab_menu_open: self.tab_menu_open,
             picker_open: self.picker_open,
             picker_rows: self.picker_rows.clone(),
+            picker_picks: self.picker_picks.clone(),
             saved_menu_open: self.saved_menu_open,
             saved_sets: self
                 .saved_sets

@@ -5,6 +5,7 @@ use std::collections::HashSet;
 
 impl Controller {
     pub(super) fn set_picker_open(&mut self, open: bool) {
+        self.picker_picks.clear();
         if open {
             self.close_other_dropdowns();
             self.windows = enumerate_windows();

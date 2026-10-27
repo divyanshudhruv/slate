@@ -74,6 +74,10 @@ pub enum Cmd {
     },
     SetPickerOpen(bool),
     TogglePicker,
+    TogglePickerPick {
+        hwnd: isize,
+    },
+    AddPicked,
     SetSavedMenu(bool),
     ToggleSavedMenu,
     BeginSaveSet,
@@ -142,6 +146,7 @@ pub struct HostInfo {
     pub tab_menu_open: bool,
     pub picker_open: bool,
     pub picker_rows: Vec<PickerRow>,
+    pub picker_picks: Vec<isize>,
     pub saved_menu_open: bool,
     pub saved_sets: Vec<SavedSetInfo>,
     pub saved_prompt: Option<SavedPrompt>,

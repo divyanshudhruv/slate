@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use ely_gpui_component::buttons::IconButton;
+use ely_gpui_component::forms::{Input, TextInput};
 use ely_gpui_component::primitives::{Icon, IconName, Image};
 use ely_gpui_component::theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize, HUE_NAMES};
 use ely_gpui_component::typography::{Ellipsis, Kbd};
@@ -185,11 +186,25 @@ pub(super) fn picker(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
         });
 
     let overlay = info.picker_open.then(|| {
-        let mut rows: Vec<AnyElement> = Vec::with_capacity(info.picker_rows.len() + 1);
-        rows.push(picker_pick_row(&controller, ctx.cx));
-        for (ix, row) in info.picker_rows.iter().enumerate() {
-            rows.push(picker_row(ix, row, &controller, ctx.cx));
+        let query = ctx.picker_query.clone();
+        let mut rows: Vec<AnyElement> = Vec::with_capacity(info.picker_rows.len() + 3);
+        if let Some(field) = ctx.picker_field.as_ref() {
+            rows.push(picker_search_row(field));
         }
+        rows.push(picker_pick_row(&controller, ctx.cx));
+        let mut shown = 0usize;
+        for (ix, row) in info.picker_rows.iter().enumerate() {
+            if !picker_matches(row, &query) {
+                continue;
+            }
+            shown += 1;
+            let picked = info.picker_picks.contains(&row.hwnd);
+            rows.push(picker_row(ix, row, picked, &controller, ctx.cx));
+        }
+        if shown == 0 {
+            rows.push(picker_empty_row(ctx.cx));
+        }
+        rows.push(picker_add_row(info.picker_picks.len(), &controller, ctx.cx));
 
         let panel = menu_panel(MENU_W, ctx.cx).children(rows);
 
@@ -198,7 +213,7 @@ pub(super) fn picker(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
             "host-picker",
             at,
             MENU_W,
-            menu_height(info.picker_rows.len().max(1)),
+            menu_height(shown + 3),
             viewport,
             enter_animation(ctx.cx),
             panel,
@@ -564,7 +579,13 @@ fn picker_pick_row(controller: &Entity<Controller>, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn picker_row(ix: usize, row: &PickerRow, controller: &Entity<Controller>, cx: &App) -> AnyElement {
+fn picker_row(
+    ix: usize,
+    row: &PickerRow,
+    picked: bool,
+    controller: &Entity<Controller>,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
     let icon_px = theme.icon_size(IconSize::Sm).to_pixels(theme.base_rem());
@@ -587,6 +608,9 @@ fn picker_row(ix: usize, row: &PickerRow, controller: &Entity<Controller>, cx: &
         .when(blocked, |el| el.opacity(0.5));
     if !blocked {
         el = el.cursor_pointer().hover(|style| style.bg(colors.hover));
+        if picked {
+            el = el.bg(colors.hover);
+        }
     }
     el = el.on_click({
         let ctrl = controller.clone();
@@ -595,10 +619,7 @@ fn picker_row(ix: usize, row: &PickerRow, controller: &Entity<Controller>, cx: &
             if blocked {
                 return;
             }
-            ctrl.update(cx, |c, cx| {
-                c.dispatch(Cmd::AddWindow { hwnd }, cx);
-                c.dispatch(Cmd::SetPickerOpen(false), cx);
-            });
+            ctrl.update(cx, |c, cx| c.dispatch(Cmd::TogglePickerPick { hwnd }, cx));
         }
     });
     el = match &row.icon {
@@ -615,7 +636,7 @@ fn picker_row(ix: usize, row: &PickerRow, controller: &Entity<Controller>, cx: &
         ),
     };
     let detail = row.reason.clone().unwrap_or_else(|| row.exe.clone());
-    el.child(
+    el = el.child(
         div()
             .flex_1()
             .min_w_0()
@@ -630,8 +651,85 @@ fn picker_row(ix: usize, row: &PickerRow, controller: &Entity<Controller>, cx: &
                     .text_color(colors.fg_subtle)
                     .child(Ellipsis::new(detail)),
             ),
-    )
-    .into_any_element()
+    );
+    if picked {
+        el = el.child(
+            Icon::new(IconName::Check)
+                .size(IconSize::Sm)
+                .color(colors.accent),
+        );
+    }
+    el.into_any_element()
+}
+
+fn picker_search_row(field: &Entity<TextInput>) -> AnyElement {
+    div()
+        .px_1()
+        .pb_1()
+        .child(Input::new(field))
+        .into_any_element()
+}
+
+fn picker_matches(row: &PickerRow, query: &str) -> bool {
+    query.is_empty()
+        || row.title.to_lowercase().contains(query)
+        || row.exe.to_lowercase().contains(query)
+}
+
+fn picker_empty_row(cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    div()
+        .px_2()
+        .py_1()
+        .text_size(theme.text_size(TextSize::Xs))
+        .text_color(theme.colors.fg_subtle)
+        .child("No windows match")
+        .into_any_element()
+}
+
+fn picker_add_row(count: usize, controller: &Entity<Controller>, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let rad_sm = theme.radius(Radius::Sm);
+    let text_sm = theme.text_size(TextSize::Sm);
+    let enabled = count > 0;
+    let label = match count {
+        0 => "Select windows to add".to_string(),
+        1 => "Add 1 window".to_string(),
+        n => format!("Add {n} windows"),
+    };
+    let color = if enabled {
+        colors.accent
+    } else {
+        colors.fg_subtle
+    };
+    let ctrl = controller.clone();
+    div()
+        .id("picker-add-row")
+        .role(Role::MenuItem)
+        .aria_label("Add selected windows")
+        .flex()
+        .items_center()
+        .gap_2()
+        .w_full()
+        .px_2()
+        .py_1()
+        .rounded(rad_sm)
+        .text_size(text_sm)
+        .text_color(color)
+        .when(enabled, |el| {
+            el.cursor_pointer()
+                .hover(|style| style.bg(colors.hover))
+                .on_click(move |_, _w, cx| {
+                    ctrl.update(cx, |c, cx| {
+                        c.dispatch(Cmd::AddPicked, cx);
+                        c.dispatch(Cmd::SetPickerOpen(false), cx);
+                    });
+                })
+        })
+        .child(Icon::new(IconName::Plus).size(IconSize::Sm).color(color))
+        .child(div().flex_1().min_w_0().child(label))
+        .into_any_element()
 }
 
 fn saved_save_row(save_enabled: bool, controller: &Entity<Controller>, cx: &App) -> AnyElement {

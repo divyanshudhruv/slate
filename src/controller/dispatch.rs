@@ -74,6 +74,18 @@ impl Controller {
                 let open = !self.picker_open;
                 self.set_picker_open(open);
             }
+            Cmd::TogglePickerPick { hwnd } => {
+                if let Some(ix) = self.picker_picks.iter().position(|h| *h == hwnd) {
+                    self.picker_picks.remove(ix);
+                } else if self.picker_rows.iter().any(|row| row.hwnd == hwnd) {
+                    self.picker_picks.push(hwnd);
+                }
+            }
+            Cmd::AddPicked => {
+                for hwnd in std::mem::take(&mut self.picker_picks) {
+                    self.add_window(hwnd);
+                }
+            }
             Cmd::SetSavedMenu(open) => self.set_saved_menu(open),
             Cmd::ToggleSavedMenu => {
                 let open = !self.saved_menu_open;
