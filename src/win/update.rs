@@ -11,7 +11,7 @@ use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::config;
 use crate::core::install;
-use crate::core::update::{self, parse_release_tag, LATEST_API_URL};
+use crate::core::update::{self, parse_release, assets_ready, LATEST_API_URL};
 
 fn http_client() -> Result<Client, String> {
     Client::builder()
@@ -109,7 +109,15 @@ pub fn fetch_latest() -> Result<String, String> {
         return Err(format!("GitHub returned HTTP {}", status.as_u16()));
     }
     let body = res.text().map_err(|err| format!("read body: {err}"))?;
-    parse_release_tag(&body).ok_or_else(|| "no release tag in response".to_string())
+    let release = parse_release(&body).ok_or_else(|| "no release tag in response".to_string())?;
+    // release-please publishes the release before the build workflow uploads assets, so a bare tag must not count as an installable update.
+    if !assets_ready(&release, asset_arch()) {
+        return Err(format!(
+            "v{} is out, but its download is not uploaded yet - try again soon",
+            release.version
+        ));
+    }
+    Ok(release.version)
 }
 
 pub fn asset_arch() -> &'static str {

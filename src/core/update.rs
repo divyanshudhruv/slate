@@ -63,11 +63,40 @@ pub fn download_url(tag: &str, arch: &str) -> String {
     )
 }
 
-pub fn parse_release_tag(body: &str) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    pub version: String,
+    pub assets: Vec<String>,
+}
+
+pub fn parse_release(body: &str) -> Option<Release> {
     let value: serde_json::Value = serde_json::from_str(body).ok()?;
     let tag = value.get("tag_name")?.as_str()?.trim();
-    let tag = tag.trim_start_matches(['v', 'V']);
-    (!tag.is_empty()).then(|| tag.to_string())
+    let version = tag.trim_start_matches(['v', 'V']);
+    if version.is_empty() {
+        return None;
+    }
+    let assets = value
+        .get("assets")
+        .and_then(|assets| assets.as_array())
+        .map(|assets| {
+            assets
+                .iter()
+                .filter_map(|asset| asset.get("name").and_then(|name| name.as_str()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Release {
+        version: version.to_string(),
+        assets,
+    })
+}
+
+pub fn assets_ready(release: &Release, arch: &str) -> bool {
+    let exe = asset_name(&release.version, arch);
+    release.assets.iter().any(|name| name == &exe)
+        && release.assets.iter().any(|name| name == "SHA256SUMS")
 }
 
 fn leading_number(text: &str) -> Option<u32> {
@@ -147,10 +176,39 @@ mod tests {
     }
 
     #[test]
-    fn tag_comes_from_release_json() {
-        let body = r#"{"tag_name":"v0.2.0","name":"Slate 0.2.0"}"#;
-        assert_eq!(parse_release_tag(body).as_deref(), Some("0.2.0"));
-        assert_eq!(parse_release_tag("{}"), None);
-        assert_eq!(parse_release_tag("not json"), None);
+    fn release_json_yields_version_and_assets() {
+        let body =
+            r#"{"tag_name":"v0.2.0","assets":[{"name":"slate-v0.2.0-x64.exe"}]}"#;
+        let release = parse_release(body).expect("release parses");
+        assert_eq!(release.version, "0.2.0");
+        assert_eq!(release.assets, vec!["slate-v0.2.0-x64.exe".to_string()]);
+        assert_eq!(parse_release("{}"), None);
+        assert_eq!(parse_release("not json"), None);
+        assert_eq!(parse_release(r#"{"tag_name":""}"), None);
+    }
+
+    #[test]
+    fn assets_ready_needs_the_arch_exe_and_checksums() {
+        let ready = Release {
+            version: "0.2.0".into(),
+            assets: vec![
+                "slate-v0.2.0-x64.exe".into(),
+                "slate-v0.2.0-arm64.exe".into(),
+                "SHA256SUMS".into(),
+            ],
+        };
+        assert!(assets_ready(&ready, "x64"));
+        assert!(assets_ready(&ready, "arm64"));
+        for missing in [
+            vec!["slate-v0.2.0-x64.exe".to_string()],
+            vec!["SHA256SUMS".to_string()],
+            Vec::new(),
+        ] {
+            let partial = Release {
+                version: "0.2.0".into(),
+                assets: missing,
+            };
+            assert!(!assets_ready(&partial, "x64"));
+        }
     }
 }
