@@ -23,9 +23,21 @@ impl Controller {
     }
 
     pub(super) fn resolve_set(&self, set: &config::SavedSet) -> Vec<isize> {
+        self.resolve_tabs(&set.tabs)
+    }
+
+    fn resolve_tabs(&self, tabs: &[config::SavedTab]) -> Vec<isize> {
+        self.resolve_tab_pairs(tabs)
+            .into_iter()
+            .map(|(_, hwnd)| hwnd)
+            .collect()
+    }
+
+    /// Saved tab index with the window it resolves to.
+    fn resolve_tab_pairs(&self, tabs: &[config::SavedTab]) -> Vec<(usize, isize)> {
         let mut used: HashSet<isize> = self.styling.keys().copied().collect();
         let mut chosen = Vec::new();
-        for tab in &set.tabs {
+        for (ix, tab) in tabs.iter().enumerate() {
             let pick = self
                 .windows
                 .iter()
@@ -39,7 +51,7 @@ impl Controller {
                 .map(|w| w.hwnd);
             if let Some(hwnd) = pick {
                 used.insert(hwnd);
-                chosen.push(hwnd);
+                chosen.push((ix, hwnd));
             }
         }
         chosen
@@ -102,30 +114,23 @@ impl Controller {
             return;
         };
         self.windows = enumerate_windows();
-        let hwnds = self.resolve_set(&set);
-        for hwnd in &hwnds {
+        self.restore_tabs(&set.tabs);
+        self.saved_menu_open = false;
+    }
+
+    pub(super) fn restore_tabs(&mut self, tabs: &[config::SavedTab]) {
+        let pairs = self.resolve_tab_pairs(tabs);
+        for (_, hwnd) in &pairs {
             self.add_window(*hwnd);
         }
-        for (i, tab) in set.tabs.iter().enumerate() {
-            if let Some(accent) = tab.accent {
-                if let Some(hwnd) = hwnds.get(i) {
-                    if let Some((group, tab_id)) = self.tab_of_hwnd(*hwnd) {
-                        self.set_tab_color(group, tab_id, Some(accent));
-                        continue;
-                    }
-                }
-                if let Some(gid) = self.active_group {
-                    if let Some(g) = self.groups.group(gid) {
-                        if let Some(t) = g.tabs.get(i) {
-                            if t.window.exe_path.eq_ignore_ascii_case(&tab.exe_path) {
-                                self.set_tab_color(gid, t.id, Some(accent));
-                            }
-                        }
-                    }
-                }
+        for (ix, hwnd) in pairs {
+            let Some(accent) = tabs[ix].accent else {
+                continue;
+            };
+            if let Some((group, tab)) = self.tab_of_hwnd(hwnd) {
+                self.set_tab_color(group, tab, Some(accent));
             }
         }
-        self.saved_menu_open = false;
     }
 
     fn persist_sets(&self) {
