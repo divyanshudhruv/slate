@@ -193,7 +193,15 @@ pub(super) fn picker(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
         ));
         for (ix, row) in info.picker_rows.iter().enumerate() {
             let picked = info.picker_picks.contains(&row.hwnd);
-            rows.push(picker_row(ix, row, picked, &controller, ctx.cx));
+            let highlighted = info.picker_cursor == Some(ix);
+            rows.push(picker_row(
+                ix,
+                row,
+                picked,
+                highlighted,
+                &controller,
+                ctx.cx,
+            ));
         }
 
         let panel = menu_panel(MENU_W, ctx.cx).children(rows);
@@ -590,6 +598,7 @@ fn picker_row(
     ix: usize,
     row: &PickerRow,
     picked: bool,
+    highlighted: bool,
     controller: &Entity<Controller>,
     cx: &App,
 ) -> AnyElement {
@@ -615,7 +624,7 @@ fn picker_row(
         .when(blocked, |el| el.opacity(0.5));
     if !blocked {
         el = el.cursor_pointer().hover(|style| style.bg(colors.hover));
-        if picked {
+        if picked || highlighted {
             el = el.bg(colors.hover);
         }
     }

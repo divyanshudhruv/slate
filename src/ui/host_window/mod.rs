@@ -285,7 +285,17 @@ impl Render for HostWindow {
                 info.hover_preview.is_some(),
             );
             move |ev: &gpui::KeyDownEvent, _w: &mut Window, cx: &mut App| {
-                if ev.keystroke.key != "escape" {
+                let key = ev.keystroke.key.as_str();
+                if picker && matches!(key, "up" | "down" | "enter") {
+                    cx.stop_propagation();
+                    ctrl.update(cx, |c, cx| match key {
+                        "up" => c.dispatch(Cmd::MovePickerCursor { delta: -1 }, cx),
+                        "down" => c.dispatch(Cmd::MovePickerCursor { delta: 1 }, cx),
+                        _ => c.dispatch(Cmd::TogglePickerCursor, cx),
+                    });
+                    return;
+                }
+                if key != "escape" {
                     return;
                 }
                 if !(overlay || tab_menu || picker || saved || renaming || prompt || preview) {

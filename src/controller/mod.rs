@@ -54,6 +54,7 @@ pub struct Controller {
     picker_open: bool,
     picker_rows: Vec<PickerRow>,
     picker_picks: Vec<isize>,
+    picker_cursor: Option<usize>,
     session_sig: u64,
     saved_sets: Vec<config::SavedSet>,
     saved_avail: HashMap<u64, usize>,
@@ -116,6 +117,7 @@ impl Controller {
             picker_open: false,
             picker_rows: Vec::new(),
             picker_picks: Vec::new(),
+            picker_cursor: None,
             session_sig: 0,
             saved_sets: config::load_sets().sets,
             saved_avail: HashMap::new(),
@@ -292,6 +294,7 @@ impl Controller {
             picker_open: self.picker_open,
             picker_rows: self.picker_rows.clone(),
             picker_picks: self.picker_picks.clone(),
+            picker_cursor: self.picker_cursor,
             saved_menu_open: self.saved_menu_open,
             saved_sets: self
                 .saved_sets
@@ -318,8 +321,6 @@ impl Controller {
             update_label,
         }
     }
-
-    // refresh_saved_avail defined in sets.rs to avoid duplication
 
     pub fn toaster(&self) -> Entity<Toaster> {
         self.toaster.clone()
@@ -351,6 +352,7 @@ impl Controller {
         self.tab_menu_open = false;
         self.picker_open = false;
         self.picker_rows.clear();
+        self.picker_cursor = None;
         self.tab_menu = None;
         self.renaming = None;
         self.rename_overrides.clear();
