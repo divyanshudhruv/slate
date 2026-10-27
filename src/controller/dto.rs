@@ -110,6 +110,7 @@ pub enum Cmd {
         tab: TabId,
     },
     PreviewCardHover(bool),
+    DismissPreview,
     Shutdown,
     ToggleTabBar,
     OpenRepository,

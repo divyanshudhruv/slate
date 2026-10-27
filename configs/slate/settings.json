@@ -3,7 +3,7 @@
   "tabs": {
     "icons": true,
     "count_badge": true,
-    "hover_preview": true,
+    "hover_preview": false,
     "show_bar": true
   },
   "updates": {

@@ -101,6 +101,7 @@ impl Controller {
             Cmd::PreviewTab { tab, anchor } => self.preview_hover(tab, anchor, cx),
             Cmd::PreviewHide { tab } => self.preview_unhover(tab, cx),
             Cmd::PreviewCardHover(hovered) => self.preview_card_hover(hovered, cx),
+            Cmd::DismissPreview => self.dismiss_hover_preview(),
             Cmd::Shutdown => self.shutdown(),
             Cmd::ToggleTabBar => {
                 self.settings.tabs.show_bar = !self.settings.tabs.show_bar;

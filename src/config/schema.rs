@@ -22,7 +22,7 @@ pub struct Tabs {
     pub icons: bool,
     #[serde(default = "yes")]
     pub count_badge: bool,
-    #[serde(default = "yes")]
+    #[serde(default = "no")]
     pub hover_preview: bool,
     #[serde(default = "yes")]
     pub show_bar: bool,
@@ -33,7 +33,7 @@ impl Default for Tabs {
         Self {
             icons: true,
             count_badge: true,
-            hover_preview: true,
+            hover_preview: false,
             show_bar: true,
         }
     }
@@ -127,16 +127,20 @@ fn accent_default() -> String {
 fn yes() -> bool {
     true
 }
+fn no() -> bool {
+    false
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_all_on() {
+    fn defaults_keep_hover_preview_off() {
         let s = Settings::default();
         assert_eq!(s.schema_version, SCHEMA_VERSION);
-        assert!(s.tabs.icons && s.tabs.count_badge && s.tabs.hover_preview);
+        assert!(s.tabs.icons && s.tabs.count_badge);
+        assert!(!s.tabs.hover_preview);
     }
 
     #[test]

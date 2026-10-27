@@ -274,19 +274,20 @@ impl Render for HostWindow {
 
         let escape = {
             let ctrl = controller.clone();
-            let (overlay, tab_menu, picker, saved, renaming, prompt) = (
+            let (overlay, tab_menu, picker, saved, renaming, prompt, preview) = (
                 info.overlay,
                 info.tab_menu_open,
                 info.picker_open,
                 info.saved_menu_open,
                 info.renaming.is_some(),
                 info.saved_prompt.is_some(),
+                info.hover_preview.is_some(),
             );
             move |ev: &gpui::KeyDownEvent, _w: &mut Window, cx: &mut App| {
                 if ev.keystroke.key != "escape" {
                     return;
                 }
-                if !(overlay || tab_menu || picker || saved || renaming || prompt) {
+                if !(overlay || tab_menu || picker || saved || renaming || prompt || preview) {
                     return;
                 }
                 ctrl.update(cx, |c, cx| {
@@ -307,6 +308,9 @@ impl Render for HostWindow {
                     }
                     if prompt {
                         c.dispatch(Cmd::CancelSavedPrompt, cx);
+                    }
+                    if preview {
+                        c.dispatch(Cmd::DismissPreview, cx);
                     }
                 });
             }
@@ -349,7 +353,8 @@ impl Render for HostWindow {
             || info.saved_menu_open
             || info.tab_menu.is_some()
             || info.renaming.is_some()
-            || info.saved_prompt.is_some();
+            || info.saved_prompt.is_some()
+            || info.hover_preview.is_some();
         let body = match (info.tabs.is_empty(), overlaying) {
             (true, _) => {
                 let caption = Caption::new("No windows yet").into_any_element();
