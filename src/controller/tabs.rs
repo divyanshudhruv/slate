@@ -1,3 +1,5 @@
+use ely_gpui_component::theme::HUE_NAMES;
+
 use super::Controller;
 use crate::core::{GroupId, TabId};
 use crate::win::{
@@ -147,10 +149,10 @@ impl Controller {
             return;
         };
         match color {
-            Some(index) => {
+            Some(index) if index < HUE_NAMES.len() => {
                 self.tab_colors.insert(hwnd, index);
             }
-            None => {
+            _ => {
                 self.tab_colors.remove(&hwnd);
             }
         }
