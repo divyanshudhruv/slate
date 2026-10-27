@@ -1,4 +1,4 @@
-<img alt="banner" src="./assets/readme/banner.png" />
+<img alt="banner" src="./assets/readme/header-banner.png" />
 
 <p align="center">
 <code>Slate</code> brings browser-style tabs to every Windows app. Your open windows become tabs in a <code>single</code> window, and you switch, add, or detach them with <code>Ctrl</code>+<code>Tab</code> and a <code>drag</code>.
@@ -52,7 +52,13 @@
 
 **`8. Self-updating`** - **Check for updates** downloads and installs updates in-app with mandatory SHA256 checksum verification. Updates are swapped into the installed location with automatic rollback support.
 
-**`9. Light and dark themes`** - following the system by default
+**`9. Light and dark themes`** - the theme button cycles system, dark, and light, and the choice is saved
+
+**`10. Search and multi-add`** - the `+` picker filters windows by name and adds several at once; arrow keys move the cursor, `Enter` adds the highlighted one, `Esc` closes
+
+**`11. Restore session on launch`** - reopen last time's tabs when Slate starts (toggle it in the Slate menu)
+
+**`12. Sets match windows, not just titles`** - restoring a set looks for an exact title first, then falls back to process and placement, so a retitled or moved window still comes back
 
 ## Gallery
 
@@ -194,7 +200,7 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | ---- | ------- |
 | `%LOCALAPPDATA%\Programs\Burntfern\Slate\` | Install directory (contains `slate.exe`) |
 | `%LOCALAPPDATA%\Burntfern\Slate\` | Data directory |
-| `%LOCALAPPDATA%\Burntfern\Slate\config.json` | Theme and accent |
+| `%LOCALAPPDATA%\Burntfern\Slate\config.json` | Theme and accent - edit it, then **Reload settings** from the Slate menu |
 | `%LOCALAPPDATA%\Burntfern\Slate\settings.json` | Tab, preview, and shortcut settings |
 | `%LOCALAPPDATA%\Burntfern\Slate\sets.json` | Saved tab sets |
 | `%LOCALAPPDATA%\Burntfern\Slate\install.json` | Registered copy (path, version, pid) used by updates and single-instance checks |
@@ -213,6 +219,10 @@ control, and GDI icon extraction.
 open, it covers the active member. Tooltips and toasts that overlap a hosted
 window have the same problem.
 
+**`3. Accent is config-file only`** - the accent hue lives in `config.json`.
+Change it there, then pick **Reload settings** in the Slate menu; there is no
+accent picker in the UI.
+
 ## Star History
 
 <a href="https://www.star-history.com/?repos=divyanshudhruv%2Fslate&type=date&legend=top-left">
@@ -228,3 +238,5 @@ window have the same problem.
 Slate is licensed under the [GNU General Public License v3.0](LICENSE).
 
 `Copyright © 2026 Divyanshu Dhruv`
+
+<img alt="banner" src="./assets/readme/footer-banner.png" />
