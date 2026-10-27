@@ -137,6 +137,7 @@ pub struct HostInfo {
     pub icons_in_tabs: bool,
     pub show_tab_badge: bool,
     pub hover_preview_enabled: bool,
+    pub theme: SharedString,
     pub overlay: bool,
     pub tab_menu_open: bool,
     pub picker_open: bool,

@@ -281,6 +281,7 @@ impl Controller {
             icons_in_tabs: self.settings.tabs.icons,
             show_tab_badge: self.settings.tabs.count_badge,
             hover_preview_enabled: self.settings.tabs.hover_preview,
+            theme: SharedString::from(self.settings.theme.clone()),
             overlay: self.overlay,
             tab_menu_open: self.tab_menu_open,
             picker_open: self.picker_open,

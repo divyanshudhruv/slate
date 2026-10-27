@@ -3,7 +3,7 @@ use ely_gpui_component::menus::{Menu, MenuItem, OverflowMenu};
 use ely_gpui_component::motion;
 use ely_gpui_component::primitives::IconName;
 use ely_gpui_component::shell::{drag_region, WindowControls};
-use ely_gpui_component::theme::{ActiveTheme, ControlSize, IconSize, Mode};
+use ely_gpui_component::theme::{ActiveTheme, ControlSize, IconSize};
 use gpui::prelude::*;
 use gpui::{
     canvas, div, linear_color_stop, linear_gradient, px, AnyElement, App, Div, Entity,
@@ -66,7 +66,7 @@ pub(super) fn build(
         .child(pick_slot)
         .child(tab_overflow)
         .child(saved_wrap)
-        .child(theme_button(&controller, ctx.cx))
+        .child(theme_button(&controller, info))
         .child(div().flex_none().w(px(CONTROLS_RESERVE_W)))
         .child(
             div()
@@ -226,24 +226,19 @@ fn menu_trigger(
         })
 }
 
-fn theme_button(controller: &Entity<Controller>, cx: &App) -> impl IntoElement {
-    let mode = cx.theme().mode();
+fn theme_button(controller: &Entity<Controller>, info: &HostInfo) -> impl IntoElement {
+    let (icon, label) = match info.theme.as_ref() {
+        "dark" => (IconName::Sun, "Dark theme"),
+        "light" => (IconName::Moon, "Light theme"),
+        _ => (IconName::Monitor, "System theme"),
+    };
     let ctrl = controller.clone();
     div().flex_none().occlude().child(
-        IconButton::new(
-            "host-theme",
-            match mode {
-                Mode::Dark => IconName::Sun,
-                Mode::Light => IconName::Moon,
-            },
-        )
-        .tooltip(match mode {
-            Mode::Dark => "Light theme",
-            Mode::Light => "Dark theme",
-        })
-        .on_click(move |_event, _window, cx| {
-            ctrl.update(cx, |c, cx| c.dispatch(Cmd::ToggleTheme, cx));
-        }),
+        IconButton::new("host-theme", icon)
+            .tooltip(label)
+            .on_click(move |_event, _window, cx| {
+                ctrl.update(cx, |c, cx| c.dispatch(Cmd::ToggleTheme, cx));
+            }),
     )
 }
 

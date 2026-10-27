@@ -1,4 +1,4 @@
-use ely_gpui_component::theme::{ActiveTheme, Mode, Theme};
+use ely_gpui_component::theme::{Mode, Theme};
 use gpui::Context;
 
 use super::dto::render_image;
@@ -40,15 +40,13 @@ impl Controller {
     }
 
     pub(super) fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        let next = match cx.theme().mode() {
-            Mode::Dark => Mode::Light,
-            Mode::Light => Mode::Dark,
+        let next = match self.settings.theme.as_str() {
+            "system" => "dark",
+            "dark" => "light",
+            _ => "system",
         };
-        self.settings.theme = match next {
-            Mode::Dark => "dark".to_string(),
-            Mode::Light => "light".to_string(),
-        };
-        Theme::set_mode_now(next, cx);
+        self.settings.theme = next.to_string();
+        self.apply_theme(cx);
         let _ = config::save_theme(&self.settings.theme, &self.settings.accent);
     }
 
