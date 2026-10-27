@@ -82,8 +82,7 @@ pub fn place(popup: isize, x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-/// Park the popup offscreen. The size stays untouched, since resizing rebuilds
-/// the swap chain and flashes the cleared surface.
+/// Park the popup offscreen. The size stays untouched, so resizing never rebuilds the swap chain or flashes the cleared surface.
 pub fn park(popup: isize) {
     let Some(popup) = hwnd(popup) else {
         return;

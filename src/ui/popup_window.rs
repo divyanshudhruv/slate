@@ -24,8 +24,7 @@ pub struct PopupWindow {
 impl PopupWindow {
     pub fn open(controller: Entity<Controller>, cx: &mut App) -> Option<gpui::WindowHandle<Self>> {
         let options = WindowOptions {
-            // gpui swaps off-screen bounds for the whole monitor, so start on
-            // screen at the card size and park right after.
+            // gpui swaps off-screen bounds for the whole monitor, so start on screen and park right after.
             window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                 point(px(0.0), px(0.0)),
                 size(px(CARD_W), px(CARD_H)),
@@ -116,8 +115,7 @@ impl Render for PopupWindow {
     }
 }
 
-/// Position the popup under the hovered tab, flipping above it when it would
-/// run off the bottom of the host window.
+/// Position the popup under the hovered tab, flipping above it when it would run off the bottom of the host window.
 fn place_at(hwnd: isize, host: isize, preview: &HoverPreview) -> bool {
     let Some((origin_x, origin_y, client_w, client_h, scale)) = popup::host_metrics(host) else {
         return false;

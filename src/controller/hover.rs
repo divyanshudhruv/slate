@@ -116,8 +116,7 @@ impl Controller {
             return;
         };
         let active = self.active_hwnd(group);
-        // The grab reads the live screen, so it is only valid while no menu has
-        // hidden the members.
+        // The grab reads the live screen, so it is only valid while no menu has hidden the members.
         let visible = !self.menu_overlay();
         let mut image = self.snapshots.get(&hwnd).cloned();
         if visible && Some(hwnd) == active {
