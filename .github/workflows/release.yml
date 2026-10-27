@@ -86,3 +86,23 @@ jobs:
             ${{ env.asset_name }}.exe
             ${{ env.asset_name_arm64 }}.exe
             SHA256SUMS
+
+  # Rewrites the release body after the assets land. Sections, numbered
+  # entries, hashes, and contributor handles are generated from the commits
+  # between this tag and the previous one. See
+  # .github/scripts/render-release-notes.mjs.
+  release-notes:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'release'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Render release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/render-release-notes.mjs "${{ github.event.release.tag_name }}"
