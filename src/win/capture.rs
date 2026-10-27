@@ -6,7 +6,7 @@ use windows::Win32::Graphics::Gdi::{
     GetDIBits, ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO,
     BITMAPINFOHEADER, DIB_RGB_COLORS, HALFTONE, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, IsIconic};
 
 const MAX_W: i32 = 512;
 
@@ -59,6 +59,9 @@ thread_local! {
 
 unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
     let h = HWND(hwnd as *mut _);
+    if IsIconic(h).as_bool() {
+        return None;
+    }
     let mut rc = RECT::default();
     GetClientRect(h, &mut rc).ok()?;
     let (w, hgt) = (rc.right - rc.left, rc.bottom - rc.top);
@@ -126,7 +129,8 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
     SelectObject(pooled.mem.0, old);
     let bgra = drawn
         .then(|| read_pixels(pooled.mem.0, pooled.bmp.0, tw, th))
-        .flatten();
+        .flatten()
+        .filter(|pixels| !is_flat(pixels));
     POOL.with(|p| *p.borrow_mut() = Some(pooled));
 
     Some(WindowSnapshot {
@@ -134,6 +138,14 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
         height: th as u32,
         bgra: bgra?,
     })
+}
+
+/// A frame of one repeated pixel means the grab caught nothing usable.
+fn is_flat(bgra: &[u8]) -> bool {
+    let Some(first) = bgra.get(0..4) else {
+        return true;
+    };
+    bgra.chunks_exact(4).all(|px| px == first)
 }
 
 unsafe fn read_pixels(mem: HDC, bmp: HBITMAP, width: i32, height: i32) -> Option<Vec<u8>> {
