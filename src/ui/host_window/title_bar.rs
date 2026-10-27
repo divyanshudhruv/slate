@@ -188,6 +188,11 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
                 .icon(IconName::FolderOpen)
                 .on_click(overlay_action(controller, || Cmd::OpenSlateFolder)),
         )
+        .item(
+            MenuItem::new("Reload settings")
+                .icon(IconName::RefreshCw)
+                .on_click(overlay_action(controller, || Cmd::ReloadSettings)),
+        )
         .separator()
         .item(MenuItem::new(info.version_label.clone()).disabled(true))
         .item(MenuItem::new("Quit Slate").on_click(quit_action(controller)))

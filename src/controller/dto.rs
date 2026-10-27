@@ -42,9 +42,6 @@ pub enum Cmd {
     ToggleOverlay,
     SetTabMenu(bool),
     ToggleTabMenu,
-    AddWindow {
-        hwnd: isize,
-    },
     CloseOtherTabs {
         group: GroupId,
         tab: TabId,
@@ -77,6 +74,10 @@ pub enum Cmd {
     TogglePickerPick {
         hwnd: isize,
     },
+    MovePickerCursor {
+        delta: isize,
+    },
+    TogglePickerCursor,
     AddPicked,
     SetSavedMenu(bool),
     ToggleSavedMenu,
@@ -121,6 +122,7 @@ pub enum Cmd {
     OpenRepository,
     CheckForUpdates,
     OpenSlateFolder,
+    ReloadSettings,
 }
 
 #[derive(Clone)]
@@ -149,6 +151,7 @@ pub struct HostInfo {
     pub picker_open: bool,
     pub picker_rows: Vec<PickerRow>,
     pub picker_picks: Vec<isize>,
+    pub picker_cursor: Option<usize>,
     pub saved_menu_open: bool,
     pub saved_sets: Vec<SavedSetInfo>,
     pub saved_prompt: Option<SavedPrompt>,

@@ -53,7 +53,6 @@ impl Controller {
                 }
                 self.tab_menu_open = open;
             }
-            Cmd::AddWindow { hwnd } => self.add_window(hwnd),
             Cmd::CloseOtherTabs { group, tab } => self.close_other_tabs(group, tab),
             Cmd::CloseTabsToRight { group, tab } => self.close_tabs_to_right(group, tab),
             Cmd::CloseTabsToLeft { group, tab } => self.close_tabs_to_left(group, tab),
@@ -75,13 +74,9 @@ impl Controller {
                 let open = !self.picker_open;
                 self.set_picker_open(open);
             }
-            Cmd::TogglePickerPick { hwnd } => {
-                if let Some(ix) = self.picker_picks.iter().position(|h| *h == hwnd) {
-                    self.picker_picks.remove(ix);
-                } else if self.picker_rows.iter().any(|row| row.hwnd == hwnd) {
-                    self.picker_picks.push(hwnd);
-                }
-            }
+            Cmd::TogglePickerPick { hwnd } => self.toggle_picker_pick(hwnd),
+            Cmd::MovePickerCursor { delta } => self.move_picker_cursor(delta),
+            Cmd::TogglePickerCursor => self.toggle_picker_cursor(),
             Cmd::AddPicked => {
                 for hwnd in std::mem::take(&mut self.picker_picks) {
                     self.add_window(hwnd);
@@ -131,6 +126,7 @@ impl Controller {
             Cmd::OpenSlateFolder => {
                 crate::win::shell::open_folder(&config::paths::data_dir());
             }
+            Cmd::ReloadSettings => self.reload_settings(cx),
         }
         self.sync_worker();
         cx.notify();
