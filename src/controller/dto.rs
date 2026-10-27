@@ -101,6 +101,7 @@ pub enum Cmd {
     ToggleTabBadge,
     ToggleHoverPreview,
     ToggleTheme,
+    ToggleRestoreSession,
     SetTabColor {
         group: GroupId,
         tab: TabId,
@@ -142,6 +143,7 @@ pub struct HostInfo {
     pub show_tab_badge: bool,
     pub hover_preview_enabled: bool,
     pub theme: SharedString,
+    pub restore_session: bool,
     pub overlay: bool,
     pub tab_menu_open: bool,
     pub picker_open: bool,

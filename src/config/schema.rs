@@ -10,6 +10,8 @@ pub struct Settings {
     pub theme: String,
     #[serde(default = "accent_default")]
     pub accent: String,
+    #[serde(default = "yes")]
+    pub restore_session: bool,
     #[serde(default)]
     pub tabs: Tabs,
     #[serde(default)]
@@ -45,6 +47,7 @@ impl Default for Settings {
             schema_version: SCHEMA_VERSION,
             theme: theme_default(),
             accent: accent_default(),
+            restore_session: true,
             tabs: Tabs::default(),
             updates: Updates::default(),
         }
@@ -94,8 +97,15 @@ pub struct SavedTab {
 #[derive(Serialize)]
 pub struct AppSettings<'a> {
     pub schema_version: u32,
+    pub restore_session: bool,
     pub tabs: &'a Tabs,
     pub updates: &'a Updates,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Session {
+    #[serde(default)]
+    pub tabs: Vec<SavedTab>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

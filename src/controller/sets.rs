@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 
 use super::Controller;
 use crate::config;
@@ -63,19 +65,7 @@ impl Controller {
         if name.is_empty() {
             return;
         }
-        let Some(group) = self.active_group.and_then(|id| self.groups.group(id)) else {
-            return;
-        };
-        let tabs: Vec<config::SavedTab> = group
-            .tabs
-            .iter()
-            .map(|t| config::SavedTab {
-                exe_path: t.window.exe_path.clone(),
-                exe_name: t.window.exe_name.clone(),
-                title_hint: t.window.title.clone(),
-                accent: self.tab_colors.get(&t.window.hwnd).copied(),
-            })
-            .collect();
+        let tabs = self.current_tabs();
         if tabs.is_empty() {
             return;
         }
@@ -139,5 +129,54 @@ impl Controller {
             sets: self.saved_sets.clone(),
         };
         let _ = config::save_sets(&sets);
+    }
+
+    fn current_tabs(&self) -> Vec<config::SavedTab> {
+        let Some(group) = self.active_group.and_then(|id| self.groups.group(id)) else {
+            return Vec::new();
+        };
+        group
+            .tabs
+            .iter()
+            .map(|t| config::SavedTab {
+                exe_path: t.window.exe_path.clone(),
+                exe_name: t.window.exe_name.clone(),
+                title_hint: t.window.title.clone(),
+                accent: self.tab_colors.get(&t.window.hwnd).copied(),
+            })
+            .collect()
+    }
+
+    pub(super) fn restore_session(&mut self) {
+        if !self.settings.restore_session {
+            return;
+        }
+        let tabs = config::load_session().tabs;
+        if tabs.is_empty() {
+            return;
+        }
+        self.windows = enumerate_windows();
+        self.restore_tabs(&tabs);
+    }
+
+    pub(super) fn persist_session(&self) {
+        let _ = config::save_session(&config::Session {
+            tabs: self.current_tabs(),
+        });
+    }
+
+    pub(super) fn session_signature(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        match self.active_group.and_then(|id| self.groups.group(id)) {
+            Some(group) => {
+                group.tabs.len().hash(&mut hasher);
+                for tab in &group.tabs {
+                    tab.window.hwnd.hash(&mut hasher);
+                    self.tab_colors.get(&tab.window.hwnd).hash(&mut hasher);
+                }
+            }
+            None => 0u8.hash(&mut hasher),
+        }
+        hasher.finish()
     }
 }

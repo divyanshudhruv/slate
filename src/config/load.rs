@@ -3,12 +3,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 
-use super::schema::{SavedSet, SavedSets, Settings, SCHEMA_VERSION};
+use super::schema::{SavedSet, SavedSets, Session, Settings, SCHEMA_VERSION};
 
 #[derive(Debug, Default)]
 struct PartialSettings {
     theme: Option<String>,
     accent: Option<String>,
+    restore_session: Option<bool>,
     tabs: Option<PartialTabs>,
     updates: Option<PartialUpdates>,
 }
@@ -64,6 +65,10 @@ pub fn settings_path() -> PathBuf {
 
 pub fn sets_path() -> PathBuf {
     app_dir().join("sets.json")
+}
+
+pub fn session_path() -> PathBuf {
+    app_dir().join("session.json")
 }
 
 pub fn backups_dir() -> PathBuf {
@@ -187,6 +192,20 @@ pub fn load_sets() -> SavedSets {
     }
 }
 
+pub fn load_session() -> Session {
+    let path = session_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Session::default();
+    };
+    match serde_json::from_str::<Session>(&text) {
+        Ok(session) => session,
+        Err(_) => {
+            backup(&path);
+            Session::default()
+        }
+    }
+}
+
 fn parse_sets(value: Value) -> SavedSets {
     let value = migrate(value);
     let mut out = SavedSets::default();
@@ -249,6 +268,7 @@ fn partial_from_value(value: Value, app: bool) -> PartialSettings {
         partial.theme = str_field(&value, "theme");
         partial.accent = str_field(&value, "accent");
     }
+    partial.restore_session = bool_field(&value, "restore_session");
     if let Some(tabs) = value.get("tabs") {
         partial.tabs = Some(PartialTabs {
             icons: bool_field(tabs, "icons"),
@@ -284,6 +304,9 @@ fn apply(settings: &mut Settings, partial: PartialSettings) {
     }
     if let Some(accent) = partial.accent {
         settings.accent = accent;
+    }
+    if let Some(restore_session) = partial.restore_session {
+        settings.restore_session = restore_session;
     }
     if let Some(tabs) = partial.tabs {
         if let Some(icons) = tabs.icons {
@@ -347,6 +370,7 @@ mod tests {
             PartialSettings {
                 theme: Some("dark".into()),
                 accent: None,
+                restore_session: None,
                 tabs: Some(PartialTabs {
                     icons: Some(false),
                     count_badge: None,
@@ -458,5 +482,30 @@ mod tests {
         let value = serde_json::json!({ "schema_version": 999999999999u64, "sets": [] });
         let sets = parse_sets(value);
         assert_eq!(sets.schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn session_round_trips() {
+        let session = Session {
+            tabs: vec![crate::config::SavedTab {
+                exe_path: "C:\\a.exe".into(),
+                exe_name: "a".into(),
+                title_hint: "A".into(),
+                accent: Some(2),
+            }],
+        };
+        let text = serde_json::to_string(&session).unwrap();
+        let back: Session = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.tabs.len(), 1);
+        assert_eq!(back.tabs[0].exe_path, "C:\\a.exe");
+        assert_eq!(back.tabs[0].accent, Some(2));
+    }
+
+    #[test]
+    fn app_value_keeps_restore_session() {
+        let mut settings = Settings::default();
+        settings.restore_session = false;
+        let value = super::save::app_value(&settings);
+        assert_eq!(value["restore_session"], false);
     }
 }

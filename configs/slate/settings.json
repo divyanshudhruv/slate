@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "restore_session": true,
   "tabs": {
     "icons": true,
     "count_badge": true,

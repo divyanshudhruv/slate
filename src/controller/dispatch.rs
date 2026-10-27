@@ -20,6 +20,7 @@ impl Controller {
                 }
                 self.worker.start();
                 self.worker.install_move_tracker(hwnd);
+                self.restore_session();
             }
             Cmd::SelectTab { group, tab } => self.select_tab(group, tab),
             Cmd::Ungroup { group, tab } => {
@@ -109,6 +110,10 @@ impl Controller {
             Cmd::ToggleTabBadge => self.toggle_tab_badge(),
             Cmd::ToggleHoverPreview => self.toggle_hover_preview(),
             Cmd::ToggleTheme => self.toggle_theme(cx),
+            Cmd::ToggleRestoreSession => {
+                self.settings.restore_session = !self.settings.restore_session;
+                self.save_settings();
+            }
             Cmd::SetTabColor { group, tab, color } => self.set_tab_color(group, tab, color),
             Cmd::PreviewTab { tab, anchor } => self.preview_hover(tab, anchor, cx),
             Cmd::PreviewHide { tab } => self.preview_unhover(tab, cx),

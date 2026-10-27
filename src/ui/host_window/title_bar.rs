@@ -162,6 +162,10 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
             MenuItem::check("Show hover preview", info.hover_preview_enabled)
                 .on_click(overlay_action(controller, || Cmd::ToggleHoverPreview)),
         )
+        .item(
+            MenuItem::check("Restore tabs on launch", info.restore_session)
+                .on_click(overlay_action(controller, || Cmd::ToggleRestoreSession)),
+        )
         .separator()
         .item(
             MenuItem::check("Hide tab bar", !info.show_tab_bar)
@@ -233,13 +237,14 @@ fn theme_button(controller: &Entity<Controller>, info: &HostInfo) -> impl IntoEl
         _ => (IconName::Monitor, "System theme"),
     };
     let ctrl = controller.clone();
-    div().flex_none().occlude().child(
-        IconButton::new("host-theme", icon)
-            .tooltip(label)
-            .on_click(move |_event, _window, cx| {
+    div()
+        .flex_none()
+        .occlude()
+        .child(IconButton::new("host-theme", icon).tooltip(label).on_click(
+            move |_event, _window, cx| {
                 ctrl.update(cx, |c, cx| c.dispatch(Cmd::ToggleTheme, cx));
-            }),
-    )
+            },
+        ))
 }
 
 fn window_controls(controller: &Entity<Controller>) -> WindowControls {

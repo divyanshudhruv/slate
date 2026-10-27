@@ -109,5 +109,12 @@ impl Controller {
                 .chain(self.styling.keys().copied())
                 .filter(|hwnd| *hwnd != 0),
         );
+        if self.host_hwnd.is_some() {
+            let signature = self.session_signature();
+            if signature != self.session_sig {
+                self.session_sig = signature;
+                self.persist_session();
+            }
+        }
     }
 }

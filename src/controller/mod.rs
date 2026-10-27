@@ -54,6 +54,7 @@ pub struct Controller {
     picker_open: bool,
     picker_rows: Vec<PickerRow>,
     picker_picks: Vec<isize>,
+    session_sig: u64,
     saved_sets: Vec<config::SavedSet>,
     saved_avail: HashMap<u64, usize>,
     saved_menu_open: bool,
@@ -115,6 +116,7 @@ impl Controller {
             picker_open: false,
             picker_rows: Vec::new(),
             picker_picks: Vec::new(),
+            session_sig: 0,
             saved_sets: config::load_sets().sets,
             saved_avail: HashMap::new(),
             saved_menu_open: false,
@@ -284,6 +286,7 @@ impl Controller {
             show_tab_badge: self.settings.tabs.count_badge,
             hover_preview_enabled: self.settings.tabs.hover_preview,
             theme: SharedString::from(self.settings.theme.clone()),
+            restore_session: self.settings.restore_session,
             overlay: self.overlay,
             tab_menu_open: self.tab_menu_open,
             picker_open: self.picker_open,
@@ -331,6 +334,7 @@ impl Controller {
     }
 
     fn shutdown(&mut self) {
+        self.persist_session();
         self.end_pick();
         self.hide_hover_preview();
         let restore_focus = self.active_group.and_then(|g| self.active_hwnd(g));
@@ -356,6 +360,7 @@ impl Controller {
             highlight.hide();
         }
         self.worker.stop();
+        self.session_sig = self.session_signature();
     }
 
     fn reconcile_active_group(&mut self) {

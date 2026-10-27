@@ -5,13 +5,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{json, Value};
 
-use super::load::{sets_path, settings_path, shared_config_path};
+use super::load::{session_path, sets_path, settings_path, shared_config_path};
 use super::paths;
-use super::schema::{AppSettings, SavedSets, Settings, SCHEMA_VERSION};
+use super::schema::{AppSettings, SavedSets, Session, Settings, SCHEMA_VERSION};
 
 pub(crate) fn app_value(settings: &Settings) -> Value {
     serde_json::to_value(AppSettings {
         schema_version: SCHEMA_VERSION,
+        restore_session: settings.restore_session,
         tabs: &settings.tabs,
         updates: &settings.updates,
     })
@@ -31,6 +32,13 @@ pub fn save_sets(sets: &SavedSets) -> io::Result<()> {
     let mut text = serde_json::to_string_pretty(sets).map_err(io::Error::other)?;
     text.push('\n');
     atomic_write(&sets_path(), text.as_bytes())
+}
+
+pub fn save_session(session: &Session) -> io::Result<()> {
+    std::fs::create_dir_all(paths::data_dir())?;
+    let mut text = serde_json::to_string_pretty(session).map_err(io::Error::other)?;
+    text.push('\n');
+    atomic_write(&session_path(), text.as_bytes())
 }
 
 pub fn save_theme(theme: &str, accent: &str) -> io::Result<()> {
