@@ -232,8 +232,8 @@ fn menu_trigger(
 
 fn theme_button(controller: &Entity<Controller>, info: &HostInfo) -> impl IntoElement {
     let (icon, label) = match info.theme.as_ref() {
-        "dark" => (IconName::Sun, "Dark theme"),
-        "light" => (IconName::Moon, "Light theme"),
+        "dark" => (IconName::Moon, "Dark theme"),
+        "light" => (IconName::Sun, "Light theme"),
         _ => (IconName::Monitor, "System theme"),
     };
     let ctrl = controller.clone();
