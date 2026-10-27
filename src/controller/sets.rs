@@ -3,7 +3,8 @@ use std::hash::{Hash, Hasher};
 
 use super::Controller;
 use crate::config;
-use crate::win::{enumerate_windows, is_blacklisted};
+use crate::core::{match_tabs, TabHint, Target};
+use crate::win::{enumerate_windows, is_blacklisted, window_rect};
 
 impl Controller {
     pub(super) fn set_saved_menu(&mut self, open: bool) {
@@ -24,7 +25,7 @@ impl Controller {
     }
 
     pub(super) fn resolve_set(&self, set: &config::SavedSet) -> Vec<isize> {
-        match_tabs(&set.tabs, &self.live_targets())
+        match_tabs(&hints(&set.tabs), &self.live_targets())
             .into_iter()
             .map(|(_, hwnd)| hwnd)
             .collect()
@@ -36,7 +37,7 @@ impl Controller {
             .iter()
             .filter(|w| !self.styling.contains_key(&w.hwnd))
             .filter(|w| !is_blacklisted(&w.class) && !w.elevated)
-            .map(|w| Target::new(w.hwnd, &w.exe_path, &w.title))
+            .map(|w| target(w.hwnd, &w.exe_path, &w.title, w.pid))
             .collect()
     }
 
@@ -47,13 +48,15 @@ impl Controller {
             return targets;
         };
         for tab in &group.tabs {
-            if targets.iter().any(|t| t.hwnd == tab.window.hwnd) {
+            let window = &tab.window;
+            if targets.iter().any(|t| t.hwnd == window.hwnd) {
                 continue;
             }
-            targets.push(Target::new(
-                tab.window.hwnd,
-                &tab.window.exe_path,
-                &tab.window.title,
+            targets.push(target(
+                window.hwnd,
+                &window.exe_path,
+                &window.title,
+                window.pid,
             ));
         }
         targets
@@ -109,7 +112,7 @@ impl Controller {
     }
 
     pub(super) fn restore_tabs(&mut self, tabs: &[config::SavedTab]) {
-        let pairs = match_tabs(tabs, &self.restore_targets());
+        let pairs = match_tabs(&hints(tabs), &self.restore_targets());
         for (_, hwnd) in &pairs {
             self.add_window(*hwnd);
         }
@@ -143,6 +146,8 @@ impl Controller {
                 exe_name: t.window.exe_name.clone(),
                 title_hint: t.window.title.clone(),
                 accent: self.tab_colors.get(&t.window.hwnd).copied(),
+                pid: Some(t.window.pid),
+                rect: window_rect(t.window.hwnd).map(|(x, y, w, h)| [x, y, w, h]),
             })
             .collect()
     }
@@ -181,52 +186,23 @@ impl Controller {
     }
 }
 
-struct Target {
-    hwnd: isize,
-    exe_path: String,
-    title: String,
+fn hints(tabs: &[config::SavedTab]) -> Vec<TabHint<'_>> {
+    tabs.iter()
+        .map(|tab| TabHint {
+            exe_path: &tab.exe_path,
+            title: &tab.title_hint,
+            pid: tab.pid,
+            rect: tab.rect,
+        })
+        .collect()
 }
 
-impl Target {
-    fn new(hwnd: isize, exe_path: &str, title: &str) -> Self {
-        Self {
-            hwnd,
-            exe_path: exe_path.to_string(),
-            title: title.to_string(),
-        }
+fn target(hwnd: isize, exe_path: &str, title: &str, pid: u32) -> Target {
+    Target {
+        hwnd,
+        exe_path: exe_path.to_string(),
+        title: title.to_string(),
+        pid,
+        rect: window_rect(hwnd).map(|(x, y, w, h)| [x, y, w, h]),
     }
-}
-
-/// Pairs saved tabs with windows, exact titles first, so a tab whose title
-/// changed cannot take a window another tab still matches by name.
-fn match_tabs(tabs: &[config::SavedTab], targets: &[Target]) -> Vec<(usize, isize)> {
-    let mut taken = vec![false; targets.len()];
-    let mut pairs = Vec::with_capacity(tabs.len());
-    let mut pending = Vec::new();
-    for (ix, tab) in tabs.iter().enumerate() {
-        let hit = targets.iter().enumerate().find(|(ti, target)| {
-            !taken[*ti]
-                && target.exe_path.eq_ignore_ascii_case(&tab.exe_path)
-                && target.title == tab.title_hint
-        });
-        match hit {
-            Some((ti, target)) => {
-                taken[ti] = true;
-                pairs.push((ix, target.hwnd));
-            }
-            None => pending.push(ix),
-        }
-    }
-    for ix in pending {
-        let tab = &tabs[ix];
-        let hit = targets.iter().enumerate().find(|(ti, target)| {
-            !taken[*ti] && target.exe_path.eq_ignore_ascii_case(&tab.exe_path)
-        });
-        if let Some((ti, target)) = hit {
-            taken[ti] = true;
-            pairs.push((ix, target.hwnd));
-        }
-    }
-    pairs.sort_by_key(|(ix, _)| *ix);
-    pairs
 }

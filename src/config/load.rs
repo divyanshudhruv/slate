@@ -492,6 +492,8 @@ mod tests {
                 exe_name: "a".into(),
                 title_hint: "A".into(),
                 accent: Some(2),
+                pid: None,
+                rect: None,
             }],
         };
         let text = serde_json::to_string(&session).unwrap();
@@ -503,9 +505,11 @@ mod tests {
 
     #[test]
     fn app_value_keeps_restore_session() {
-        let mut settings = Settings::default();
-        settings.restore_session = false;
-        let value = super::save::app_value(&settings);
+        let settings = Settings {
+            restore_session: false,
+            ..Settings::default()
+        };
+        let value = crate::config::save::app_value(&settings);
         assert_eq!(value["restore_session"], false);
     }
 }

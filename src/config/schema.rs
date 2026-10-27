@@ -92,6 +92,10 @@ pub struct SavedTab {
     pub title_hint: String,
     #[serde(default)]
     pub accent: Option<usize>,
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub rect: Option<[i32; 4]>,
 }
 
 #[derive(Serialize)]
@@ -192,6 +196,8 @@ mod tests {
                     exe_name: "chrome.exe".into(),
                     title_hint: "Tab".into(),
                     accent: None,
+                    pid: Some(42),
+                    rect: Some([0, 0, 1280, 800]),
                 }],
             }],
         };
