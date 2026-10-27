@@ -12,6 +12,7 @@ struct PartialSettings {
     restore_session: Option<bool>,
     tabs: Option<PartialTabs>,
     updates: Option<PartialUpdates>,
+    keybinds: Option<PartialKeybinds>,
 }
 
 #[derive(Debug, Default)]
@@ -26,6 +27,14 @@ struct PartialTabs {
 struct PartialUpdates {
     latest: Option<String>,
     checked_at: Option<i64>,
+}
+
+#[derive(Debug, Default)]
+struct PartialKeybinds {
+    next_tab: Option<String>,
+    prev_tab: Option<String>,
+    close_tab: Option<String>,
+    select_tab: Option<String>,
 }
 
 fn home_dir() -> PathBuf {
@@ -283,6 +292,14 @@ fn partial_from_value(value: Value, app: bool) -> PartialSettings {
             checked_at: i64_field(updates, "checked_at"),
         });
     }
+    if let Some(keybinds) = value.get("keybinds") {
+        partial.keybinds = Some(PartialKeybinds {
+            next_tab: str_field(keybinds, "next_tab"),
+            prev_tab: str_field(keybinds, "prev_tab"),
+            close_tab: str_field(keybinds, "close_tab"),
+            select_tab: str_field(keybinds, "select_tab"),
+        });
+    }
     partial
 }
 
@@ -328,6 +345,20 @@ fn apply(settings: &mut Settings, partial: PartialSettings) {
         }
         if let Some(checked_at) = updates.checked_at {
             settings.updates.checked_at = checked_at;
+        }
+    }
+    if let Some(keybinds) = partial.keybinds {
+        if let Some(next_tab) = keybinds.next_tab {
+            settings.keybinds.next_tab = next_tab;
+        }
+        if let Some(prev_tab) = keybinds.prev_tab {
+            settings.keybinds.prev_tab = prev_tab;
+        }
+        if let Some(close_tab) = keybinds.close_tab {
+            settings.keybinds.close_tab = close_tab;
+        }
+        if let Some(select_tab) = keybinds.select_tab {
+            settings.keybinds.select_tab = select_tab;
         }
     }
 }
@@ -378,12 +409,30 @@ mod tests {
                     show_bar: None,
                 }),
                 updates: None,
+                keybinds: None,
             },
         );
         assert_eq!(s.theme, "dark");
         assert_eq!(s.accent, "blue");
         assert!(!s.tabs.icons);
         assert!(s.tabs.count_badge);
+    }
+
+    #[test]
+    fn keybinds_partial_only_sets_what_it_gives() {
+        let value = serde_json::json!({
+            "keybinds": { "next_tab": "nonsense", "prev_tab": "ctrl+tab" }
+        });
+        let mut s = Settings::default();
+        apply(&mut s, partial_from_value(value, true));
+        assert_eq!(s.keybinds.prev_tab, "ctrl+tab");
+        assert_eq!(s.keybinds.close_tab, "ctrl+w");
+        let bindings = s.keybinds.bindings();
+        let (_, got) = bindings
+            .iter()
+            .find(|(action, _)| *action == crate::core::keys::KeyAction::PrevTab)
+            .unwrap();
+        assert_eq!(got.vk, crate::core::keys::KeyAction::PrevTab.default().vk);
     }
 
     #[test]

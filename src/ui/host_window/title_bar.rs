@@ -117,6 +117,16 @@ fn quit_action(controller: &Entity<Controller>) -> impl Fn(&mut Window, &mut App
     }
 }
 
+/// Config chords read `ctrl+shift+tab`; the key labels take `ctrl-shift-tab`.
+fn chord(source: &str) -> String {
+    source.replace('+', "-")
+}
+
+/// The select-tab chord takes any digit, so it is labeled with `*`.
+fn chord_any_digit(source: &str) -> String {
+    chord(source).replace(|c: char| c.is_ascii_digit(), "*")
+}
+
 fn update_state(state: &UpdateState) -> (IconName, bool, bool) {
     match state {
         UpdateState::Checking => (IconName::RefreshCw, true, false),
@@ -130,13 +140,34 @@ fn update_state(state: &UpdateState) -> (IconName, bool, bool) {
 fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
     let (update_icon, update_disabled, _) = update_state(&info.update);
     let shortcuts_menu = Menu::new()
-        .item(MenuItem::new("Next tab").keys("ctrl-tab"))
-        .item(MenuItem::new("Previous tab").keys("ctrl-shift-tab"))
-        .item(MenuItem::new("Jump to tab 1-9").keys("ctrl-1"))
-        .item(MenuItem::new("Close tab").keys("ctrl-w"))
+        .item(
+            MenuItem::new("Next tab")
+                .keys(chord(&info.keybinds.next_tab))
+                .disabled(true),
+        )
+        .item(
+            MenuItem::new("Previous tab")
+                .keys(chord(&info.keybinds.prev_tab))
+                .disabled(true),
+        )
+        .item(
+            MenuItem::new("Go to tab")
+                .keys(chord_any_digit(&info.keybinds.select_tab))
+                .disabled(true),
+        )
+        .item(
+            MenuItem::new("Close tab")
+                .keys(chord(&info.keybinds.close_tab))
+                .disabled(true),
+        )
         .separator()
-        .item(MenuItem::new("Pick a window").keys("tab"))
-        .item(MenuItem::new("Close menu").keys("esc"));
+        .item(MenuItem::new("Pick a window").keys("tab").disabled(true))
+        .item(MenuItem::new("Close menu").keys("esc").disabled(true))
+        .separator()
+        .item(
+            MenuItem::new("Change keyboard shortcuts...")
+                .on_click(overlay_action(controller, || Cmd::OpenKeybinds)),
+        );
     Menu::new()
         .item(
             MenuItem::new("Pick a window...")

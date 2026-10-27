@@ -8,7 +8,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, IsIconic};
 
-const MAX_W: i32 = 512;
+const MAX_W: i32 = 640;
 
 const PW_CLIENTONLY: u32 = 1;
 const PW_RENDERFULLCONTENT: u32 = 2;
@@ -142,6 +142,11 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
     if bgra.is_none() {
         bgra = print_window(h, pooled.mem.0, pooled.bmp.0, w, hgt, tw, th);
     }
+    if bgra.is_none() {
+        // Fallback to a fresh bitmap/target to avoid reusing a possibly corrupted pooled frame
+        POOL.with(|p| *p.borrow_mut() = None);
+        return grab(hwnd);
+    }
     SelectObject(pooled.mem.0, old);
     POOL.with(|p| *p.borrow_mut() = Some(pooled));
 
@@ -187,6 +192,19 @@ fn is_flat(bgra: &[u8]) -> bool {
     let Some((first, rest)) = bgra.as_chunks::<4>().0.split_first() else {
         return true;
     };
+    // Also treat very dark/empty frames as unusable to avoid black patches
+    let mut nonzero = 0;
+    for px in bgra.as_chunks::<4>().0 {
+        if px[0] != 0 || px[1] != 0 || px[2] != 0 {
+            nonzero += 1;
+            if nonzero > 16 {
+                break;
+            }
+        }
+    }
+    if nonzero <= 4 {
+        return true;
+    }
     rest.iter().all(|px| px == first)
 }
 

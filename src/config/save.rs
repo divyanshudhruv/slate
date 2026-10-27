@@ -15,6 +15,7 @@ pub(crate) fn app_value(settings: &Settings) -> Value {
         restore_session: settings.restore_session,
         tabs: &settings.tabs,
         updates: &settings.updates,
+        keybinds: &settings.keybinds,
     })
     .unwrap_or_else(|_| json!({ "schema_version": SCHEMA_VERSION }))
 }

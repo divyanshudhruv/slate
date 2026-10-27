@@ -4,6 +4,7 @@ use gpui::{RenderImage, SharedString};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::core::keys::KeyAction;
 use crate::core::{GroupId, TabId, UpdateState};
 use crate::win::{IconPixels, WindowSnapshot};
 
@@ -123,6 +124,15 @@ pub enum Cmd {
     CheckForUpdates,
     OpenSlateFolder,
     ReloadSettings,
+    OpenKeybinds,
+    CloseDialog,
+    InstallAvailableUpdate,
+    SetKeybindChord {
+        action: KeyAction,
+        chord: Option<crate::core::keys::Chord>,
+    },
+    ResetKeybinds,
+    CommitKeybinds,
 }
 
 #[derive(Clone)]
@@ -161,6 +171,8 @@ pub struct HostInfo {
     pub hover_preview: Option<HoverPreview>,
     pub show_tab_bar: bool,
     pub update: UpdateState,
+    pub dialog: Option<Dialog>,
+    pub keybinds: crate::config::Keybinds,
     pub caption: SharedString,
     pub version_label: SharedString,
     pub update_label: SharedString,
@@ -187,6 +199,12 @@ pub struct SavedSetInfo {
     pub name: String,
     pub available: usize,
     pub total: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dialog {
+    Keybinds,
+    Update,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

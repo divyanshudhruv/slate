@@ -2,7 +2,7 @@ use ely_gpui_component::feedback::Toast;
 use ely_gpui_component::primitives::Severity;
 use gpui::Context;
 
-use super::dto::update_toast;
+use super::dto::{update_toast, Dialog};
 use super::Controller;
 use crate::config;
 use crate::core::update::{self, UpdateState, CHECK_COOLDOWN_SECS};
@@ -38,8 +38,10 @@ pub(super) fn startup_install() -> crate::core::install::Plan {
 
 impl Controller {
     pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
-        if let UpdateState::Available(version) = self.update.clone() {
-            self.install_available_update(version, cx);
+        if matches!(self.update, UpdateState::Available(_)) {
+            self.dialog = Some(Dialog::Update);
+            self.invalidate_info();
+            cx.notify();
             return;
         }
         let now = update::now_secs();
@@ -69,6 +71,10 @@ impl Controller {
             });
         })
         .detach();
+    }
+
+    pub(super) fn install_update_from_dialog(&mut self, version: String, cx: &mut Context<Self>) {
+        self.install_available_update(version, cx);
     }
 
     fn install_available_update(&mut self, version: String, cx: &mut Context<Self>) {
@@ -125,11 +131,7 @@ impl Controller {
                 self.settings.updates.latest = Some(version.clone());
                 self.save_settings();
                 self.update = UpdateState::Available(version.clone());
-                let toast = Toast::new(format!("v{version} is out"))
-                    .severity(Severity::Success)
-                    .body("Click update to download and install.")
-                    .action("Update now", |_window, _app: &mut gpui::App| {});
-                self.push_toast(toast, cx);
+                self.dialog = Some(Dialog::Update);
             }
             Ok(_) => {
                 self.settings.updates.latest = None;

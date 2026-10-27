@@ -7,8 +7,14 @@ use crate::core::TabId;
 use crate::win::capture_window;
 
 impl Controller {
+    /// True while anything is drawn over the member area, so members stay hidden.
+    pub(super) fn overlaying(&self) -> bool {
+        self.menu_overlay() || self.hover_preview.is_some()
+    }
+
     pub(super) fn menu_overlay(&self) -> bool {
         self.overlay
+            || self.dialog.is_some()
             || self.tab_menu_open
             || self.picker_open
             || self.saved_menu_open
@@ -30,11 +36,11 @@ impl Controller {
         self.hover_tab = Some(tab);
         self.preview_gen = self.preview_gen.wrapping_add(1);
         if self.hover_preview.is_some() {
-            self.show_hover_preview(tab, anchor);
+            self.show_hover_preview(tab, anchor, cx);
             return;
         }
         self.after_hover_delay(PREVIEW_OPEN_MS, cx, move |c, cx| {
-            c.show_hover_preview(tab, anchor);
+            c.show_hover_preview(tab, anchor, cx);
             c.sync_worker();
             cx.notify();
         });
@@ -107,7 +113,12 @@ impl Controller {
         .detach();
     }
 
-    pub(super) fn show_hover_preview(&mut self, tab: TabId, anchor: (f32, f32, f32, f32)) {
+    pub(super) fn show_hover_preview(
+        &mut self,
+        tab: TabId,
+        anchor: (f32, f32, f32, f32),
+        cx: &mut Context<Self>,
+    ) {
         self.invalidate_info();
         let (Some(_host), Some(group)) = (self.host_hwnd, self.active_group) else {
             return;
@@ -116,16 +127,39 @@ impl Controller {
             return;
         };
         let active = self.active_hwnd(group);
-        // The grab reads the live screen, so it is only valid while no menu has hidden the members.
-        let visible = !self.menu_overlay();
-        let mut image = self.snapshots.get(&hwnd).cloned();
-        if visible && Some(hwnd) == active {
-            if let Some(fresh) = capture_window(hwnd).and_then(render_snapshot) {
-                self.snapshots.insert(hwnd, fresh.clone());
-                image = Some(fresh);
-            }
+        let menu_open = self.menu_overlay();
+        let cached = self.snapshots.get(&hwnd).cloned();
+        self.hover_preview = Some(HoverPreview {
+            tab,
+            anchor,
+            image: cached,
+        });
+        if Some(hwnd) != active || menu_open {
+            return;
         }
-        self.hover_preview = Some(HoverPreview { tab, anchor, image });
+        let gen = self.preview_gen;
+        cx.spawn(async move |this, cx| {
+            let snapshot = cx
+                .background_executor()
+                .spawn(async move { capture_window(hwnd) })
+                .await;
+            let _ = this.update(cx, |controller, cx| {
+                if controller.preview_gen != gen {
+                    return;
+                }
+                let image = snapshot.and_then(render_snapshot);
+                if let Some(image) = image.as_ref() {
+                    controller.snapshots.insert(hwnd, image.clone());
+                }
+                let fallback = controller.snapshots.get(&hwnd).cloned();
+                if let Some(preview) = controller.hover_preview.as_mut() {
+                    preview.image = image.or(fallback);
+                }
+                controller.invalidate_info();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(super) fn hide_hover_preview(&mut self) {

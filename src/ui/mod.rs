@@ -1,9 +1,8 @@
+pub mod dialog_window;
 pub mod host_window;
-pub mod popup_window;
 pub mod tab_bar;
 
 pub use host_window::HostWindow;
-pub use popup_window::PopupWindow;
 
 use std::sync::Arc;
 

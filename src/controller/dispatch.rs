@@ -123,10 +123,20 @@ impl Controller {
                 crate::win::shell::open_url(crate::core::update::REPOSITORY_URL);
             }
             Cmd::CheckForUpdates => self.check_for_updates(cx),
+            Cmd::InstallAvailableUpdate => {
+                if let crate::core::UpdateState::Available(version) = self.update.clone() {
+                    self.install_update_from_dialog(version, cx);
+                }
+            }
             Cmd::OpenSlateFolder => {
                 crate::win::shell::open_folder(&config::paths::data_dir());
             }
             Cmd::ReloadSettings => self.reload_settings(cx),
+            Cmd::OpenKeybinds => self.open_keybinds(),
+            Cmd::CloseDialog => self.close_dialog(),
+            Cmd::SetKeybindChord { action, chord } => self.set_keybind_chord(action, chord, cx),
+            Cmd::ResetKeybinds => self.reset_keybinds(cx),
+            Cmd::CommitKeybinds => self.commit_keybinds(cx),
         }
         self.sync_worker();
         cx.notify();

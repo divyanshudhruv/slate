@@ -1,6 +1,7 @@
 pub mod group;
 pub mod identity;
 pub mod install;
+pub mod keys;
 pub mod matching;
 pub mod update;
 

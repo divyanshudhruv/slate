@@ -11,7 +11,7 @@ use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::config;
 use crate::core::install;
-use crate::core::update::{self, parse_release, assets_ready, LATEST_API_URL};
+use crate::core::update::{self, assets_ready, parse_release, LATEST_API_URL};
 
 fn http_client() -> Result<Client, String> {
     Client::builder()

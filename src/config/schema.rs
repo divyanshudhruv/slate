@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::core::keys::{format_chord, KeyAction, ACTIONS};
+
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +18,8 @@ pub struct Settings {
     pub tabs: Tabs,
     #[serde(default)]
     pub updates: Updates,
+    #[serde(default)]
+    pub keybinds: Keybinds,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +54,7 @@ impl Default for Settings {
             restore_session: true,
             tabs: Tabs::default(),
             updates: Updates::default(),
+            keybinds: Keybinds::default(),
         }
     }
 }
@@ -98,12 +103,95 @@ pub struct SavedTab {
     pub rect: Option<[i32; 4]>,
 }
 
+/// Per-action chords written as strings like "ctrl+shift+tab" so hand edits stay possible.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Keybinds {
+    #[serde(default = "next_tab_default")]
+    pub next_tab: String,
+    #[serde(default = "prev_tab_default")]
+    pub prev_tab: String,
+    #[serde(default = "close_tab_default")]
+    pub close_tab: String,
+    #[serde(default = "select_tab_default")]
+    pub select_tab: String,
+}
+
+impl Default for Keybinds {
+    fn default() -> Self {
+        Self {
+            next_tab: next_tab_default(),
+            prev_tab: prev_tab_default(),
+            close_tab: close_tab_default(),
+            select_tab: select_tab_default(),
+        }
+    }
+}
+
+fn next_tab_default() -> String {
+    format_chord(KeyAction::NextTab.default()).unwrap_or_else(|| "ctrl+tab".into())
+}
+fn prev_tab_default() -> String {
+    format_chord(KeyAction::PrevTab.default()).unwrap_or_else(|| "ctrl+shift+tab".into())
+}
+fn close_tab_default() -> String {
+    format_chord(KeyAction::CloseTab.default()).unwrap_or_else(|| "ctrl+w".into())
+}
+fn select_tab_default() -> String {
+    format_chord(KeyAction::SelectTab.default()).unwrap_or_else(|| "ctrl+1".into())
+}
+
+impl Keybinds {
+    fn chord_text(&self, action: KeyAction) -> &str {
+        match action {
+            KeyAction::NextTab => &self.next_tab,
+            KeyAction::PrevTab => &self.prev_tab,
+            KeyAction::CloseTab => &self.close_tab,
+            KeyAction::SelectTab => &self.select_tab,
+        }
+    }
+
+    /// Writes a chord for an action, falling back to the action's own default when it cannot be spelled.
+    pub fn set_chord(&mut self, action: KeyAction, chord: crate::core::keys::Chord) {
+        let text = match format_chord(chord) {
+            Some(text) => text,
+            None => crate::core::keys::format_chord(action.default()).unwrap_or_default(),
+        };
+        match action {
+            KeyAction::NextTab => self.next_tab = text,
+            KeyAction::PrevTab => self.prev_tab = text,
+            KeyAction::CloseTab => self.close_tab = text,
+            KeyAction::SelectTab => self.select_tab = text,
+        }
+    }
+
+    /// Parsed chords, one per action, falling back to the default
+    /// when a value does not parse or collides with an earlier one.
+    pub fn bindings(&self) -> Vec<(KeyAction, crate::core::keys::Chord)> {
+        let mut used: Vec<crate::core::keys::Chord> = Vec::new();
+        let mut out = Vec::with_capacity(ACTIONS.len());
+        for action in ACTIONS {
+            let mut chord = crate::core::keys::parse(self.chord_text(action))
+                .unwrap_or_else(|_| action.default());
+            if used.contains(&chord) {
+                chord = action.default();
+            }
+            if used.contains(&chord) {
+                continue;
+            }
+            used.push(chord);
+            out.push((action, chord));
+        }
+        out
+    }
+}
+
 #[derive(Serialize)]
 pub struct AppSettings<'a> {
     pub schema_version: u32,
     pub restore_session: bool,
     pub tabs: &'a Tabs,
     pub updates: &'a Updates,
+    pub keybinds: &'a Keybinds,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -164,6 +252,56 @@ mod tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.theme, s.theme);
         assert_eq!(back.tabs.icons, s.tabs.icons);
+        assert_eq!(back.keybinds, s.keybinds);
+    }
+
+    #[test]
+    fn keybinds_defaults_match_actions() {
+        let keybinds = Keybinds::default();
+        let bindings = keybinds.bindings();
+        assert_eq!(bindings.len(), ACTIONS.len());
+        for (action, chord) in bindings {
+            assert_eq!(chord, action.default());
+        }
+    }
+
+    #[test]
+    fn keybinds_falls_back_to_defaults() {
+        let keybinds = serde_json::from_str::<Keybinds>(
+            "{ \"next_tab\": \"nonsense\", \"prev_tab\": \"ctrl+tab\" }",
+        )
+        .unwrap();
+        let bindings = keybinds.bindings();
+        let find = |want: KeyAction| {
+            bindings
+                .iter()
+                .find_map(|(action, chord)| (action == &want).then_some(*chord))
+        };
+        assert_eq!(find(KeyAction::NextTab), Some(KeyAction::NextTab.default()));
+        assert_eq!(find(KeyAction::PrevTab), Some(KeyAction::PrevTab.default()));
+        assert_eq!(
+            find(KeyAction::CloseTab),
+            Some(KeyAction::CloseTab.default())
+        );
+        assert_eq!(
+            find(KeyAction::SelectTab),
+            Some(KeyAction::SelectTab.default())
+        );
+    }
+
+    #[test]
+    fn keybinds_deduplicates_chords() {
+        let keybinds = serde_json::from_str::<Keybinds>(
+            "{ \"next_tab\": \"ctrl+tab\", \"prev_tab\": \"ctrl+tab\" }",
+        )
+        .unwrap();
+        let bindings = keybinds.bindings();
+        let mut seen = Vec::new();
+        for (_action, chord) in bindings {
+            assert!(!seen.contains(&chord), "duplicate chord {chord:?}");
+            seen.push(chord);
+        }
+        assert!(seen.contains(&KeyAction::SelectTab.default()));
     }
 
     #[test]

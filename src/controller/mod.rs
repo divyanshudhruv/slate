@@ -1,3 +1,4 @@
+mod dialog;
 mod dispatch;
 mod dto;
 mod events;
@@ -10,7 +11,7 @@ mod tabs;
 mod update;
 
 pub use dto::{
-    Cmd, HostInfo, HoverPreview, PickerRow, SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
+    Cmd, Dialog, HostInfo, HoverPreview, PickerRow, SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
 };
 
 use ely_gpui_component::feedback::Toaster;
@@ -74,6 +75,8 @@ pub struct Controller {
     drag: Option<isize>,
     drag_active: bool,
     update: UpdateState,
+    dialog: Option<Dialog>,
+    keybind_draft: Vec<Option<crate::core::keys::Chord>>,
     info_cache: RefCell<Option<Arc<HostInfo>>>,
     index_cache: RefCell<Option<Index>>,
     _pump: Option<WinEventPump>,
@@ -136,7 +139,12 @@ impl Controller {
             tray: crate::win::TrayIcon::start(),
             drag: None,
             drag_active: false,
+            dialog: match &update {
+                UpdateState::Available(_) => Some(Dialog::Update),
+                _ => None,
+            },
             update,
+            keybind_draft: Vec::new(),
             info_cache: RefCell::new(None),
             index_cache: RefCell::new(None),
             _pump: WinEventPump::install(),
@@ -144,6 +152,7 @@ impl Controller {
         };
         Self::start_event_pump(cx);
         controller.apply_theme(cx);
+        dialog::push_shortcuts(&controller.settings);
         controller
     }
 
@@ -316,6 +325,8 @@ impl Controller {
             hover_preview: self.hover_preview.clone(),
             show_tab_bar: self.settings.tabs.show_bar,
             update: self.update.clone(),
+            dialog: self.dialog,
+            keybinds: self.settings.keybinds.clone(),
             caption,
             version_label,
             update_label,
@@ -324,14 +335,6 @@ impl Controller {
 
     pub fn toaster(&self) -> Entity<Toaster> {
         self.toaster.clone()
-    }
-
-    pub fn host_hwnd(&self) -> Option<isize> {
-        self.host_hwnd
-    }
-
-    pub fn hover_preview(&self) -> Option<HoverPreview> {
-        self.hover_preview.clone()
     }
 
     fn shutdown(&mut self) {

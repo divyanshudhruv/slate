@@ -56,12 +56,6 @@ fn main() {
                 eprintln!("Slate: host window failed to open: {err:?}");
                 std::process::exit(1);
             }
-            if std::env::var_os("SLATE_NO_POPUP").is_none()
-                && ui::PopupWindow::open(controller, cx).is_none()
-            {
-                eprintln!("Slate: popup window failed to open");
-            }
-
             cx.activate(true);
         });
 }

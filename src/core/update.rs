@@ -177,14 +177,13 @@ mod tests {
 
     #[test]
     fn release_json_yields_version_and_assets() {
-        let body =
-            r#"{"tag_name":"v0.2.0","assets":[{"name":"slate-v0.2.0-x64.exe"}]}"#;
+        let body = r#"{"tag_name":"v0.2.0","assets":[{"name":"slate-v0.2.0-x64.exe"}]}"#;
         let release = parse_release(body).expect("release parses");
         assert_eq!(release.version, "0.2.0");
         assert_eq!(release.assets, vec!["slate-v0.2.0-x64.exe".to_string()]);
         assert_eq!(parse_release("{}"), None);
         assert_eq!(parse_release("not json"), None);
-        assert_eq!(parse_release(r#"{"tag_name":""}"), None);
+        assert_eq!(parse_release(r#"{"tag_name":""}"#), None);
     }
 
     #[test]

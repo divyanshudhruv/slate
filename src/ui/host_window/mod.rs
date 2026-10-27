@@ -242,15 +242,16 @@ impl Render for HostWindow {
 
         let dismiss = {
             let ctrl = controller.clone();
-            let (overlay, tab_menu, picker, saved, ctx_menu) = (
+            let (overlay, tab_menu, picker, saved, ctx_menu, dialog) = (
                 info.overlay,
                 info.tab_menu_open,
                 info.picker_open,
                 info.saved_menu_open,
                 info.tab_menu.is_some(),
+                info.dialog.is_some(),
             );
             move |_ev: &gpui::MouseDownEvent, _w: &mut Window, cx: &mut App| {
-                if !(overlay || tab_menu || picker || saved || ctx_menu) {
+                if !(overlay || tab_menu || picker || saved || ctx_menu || dialog) {
                     return;
                 }
                 ctrl.update(cx, |c, cx| {
@@ -269,13 +270,16 @@ impl Render for HostWindow {
                     if ctx_menu {
                         c.dispatch(Cmd::CloseTabMenu, cx);
                     }
+                    if dialog {
+                        c.dispatch(Cmd::CloseDialog, cx);
+                    }
                 });
             }
         };
 
         let escape = {
             let ctrl = controller.clone();
-            let (overlay, tab_menu, picker, saved, renaming, prompt, preview) = (
+            let (overlay, tab_menu, picker, saved, renaming, prompt, preview, dialog) = (
                 info.overlay,
                 info.tab_menu_open,
                 info.picker_open,
@@ -283,6 +287,7 @@ impl Render for HostWindow {
                 info.renaming.is_some(),
                 info.saved_prompt.is_some(),
                 info.hover_preview.is_some(),
+                info.dialog.is_some(),
             );
             move |ev: &gpui::KeyDownEvent, _w: &mut Window, cx: &mut App| {
                 let key = ev.keystroke.key.as_str();
@@ -298,7 +303,15 @@ impl Render for HostWindow {
                 if key != "escape" {
                     return;
                 }
-                if !(overlay || tab_menu || picker || saved || renaming || prompt || preview) {
+                if !(overlay
+                    || tab_menu
+                    || picker
+                    || saved
+                    || renaming
+                    || prompt
+                    || preview
+                    || dialog)
+                {
                     return;
                 }
                 ctrl.update(cx, |c, cx| {
@@ -322,6 +335,9 @@ impl Render for HostWindow {
                     }
                     if preview {
                         c.dispatch(Cmd::DismissPreview, cx);
+                    }
+                    if dialog {
+                        c.dispatch(Cmd::CloseDialog, cx);
                     }
                 });
             }
@@ -359,12 +375,14 @@ impl Render for HostWindow {
             .child(title.element);
 
         let overlaying = info.overlay
+            || info.dialog.is_some()
             || info.tab_menu_open
             || info.picker_open
             || info.saved_menu_open
             || info.tab_menu.is_some()
             || info.renaming.is_some()
-            || info.saved_prompt.is_some();
+            || info.saved_prompt.is_some()
+            || info.hover_preview.is_some();
         let body = match (info.tabs.is_empty(), overlaying) {
             (true, _) => {
                 let caption = Caption::new("No windows yet").into_any_element();
@@ -398,6 +416,17 @@ impl Render for HostWindow {
 
         let toaster = self.controller.read(cx).toaster();
         let mut content = content.child(body);
+        if let Some(preview) = info.hover_preview.as_ref() {
+            let tab = info.tabs.iter().find(|t| t.id == preview.tab);
+            let on_hover = {
+                let ctrl = controller.clone();
+                move |hovered: &bool, _w: &mut Window, cx: &mut App| {
+                    let hovered = *hovered;
+                    ctrl.update(cx, |c, cx| c.dispatch(Cmd::PreviewCardHover(hovered), cx));
+                }
+            };
+            content = content.child(hover_card::hover_card(cx, preview, tab, viewport, on_hover));
+        }
         if let Some(overlay) = title.picker_overlay {
             content = content.child(overlay);
         }
@@ -409,6 +438,9 @@ impl Render for HostWindow {
         }
         if let Some(overlay) = title.saved_overlay {
             content = content.child(overlay);
+        }
+        if let Some(dialog) = super::dialog_window::in_host_dialog(&controller, cx) {
+            content = content.child(dialog);
         }
         if let Some(dialog) = self.rename_dialog(window, cx, info.as_ref(), group) {
             content = content.child(dialog);

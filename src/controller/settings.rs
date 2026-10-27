@@ -38,6 +38,7 @@ impl Controller {
                 self.ensure_icon(hwnd);
             }
         }
+        super::dialog::push_shortcuts(&self.settings);
         self.apply_theme(cx);
         let toast = Toast::new("Settings reloaded").severity(Severity::Info);
         self.toaster
