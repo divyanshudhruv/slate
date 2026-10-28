@@ -204,6 +204,10 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `%LOCALAPPDATA%\Burntfern\Slate\sets.json` | Saved tab sets |
 | `%LOCALAPPDATA%\Burntfern\Slate\session.json` | Tabs restored on the next launch |
 | `%LOCALAPPDATA%\Burntfern\Slate\install.json` | Registered copy (path, version, pid) used by updates and single-instance checks |
+| `%LOCALAPPDATA%\Burntfern\Slate\instance.pid` | Pid of the copy that owns this data folder |
+| `%LOCALAPPDATA%\Burntfern\Slate\update-pending.json` | Written before a swap, cleared on the first frame; a build that never starts is rolled back |
+| `%LOCALAPPDATA%\Burntfern\Slate\janitor.key` | DPAPI-protected key that signs the crash-recovery payload |
+| `%LOCALAPPDATA%\Burntfern\Slate\janitor-<pid>.bin` | Crash-recovery payload for windows owned by a dead process |
 | `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
 | `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap helper |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |

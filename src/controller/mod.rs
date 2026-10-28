@@ -403,6 +403,8 @@ impl Controller {
         self.persist_session();
         self.end_pick();
         self.hide_hover_preview();
+        // Stop placement before unhooking members, otherwise a late pass can hide a window that was just restored.
+        self.worker.stop_and_wait();
         let restore_focus = self.active_group.and_then(|g| self.active_hwnd(g));
         for (hwnd, state) in self.styling.drain() {
             unregister_member(hwnd, &state);
@@ -427,7 +429,8 @@ impl Controller {
         if let Some(highlight) = self.highlight.as_ref() {
             highlight.hide();
         }
-        self.worker.stop();
+        // Everything is restored, so the crash payload must not be replayed by the janitor child.
+        self.janitor.disarm();
         self.session_sig = self.session_signature();
     }
 
@@ -560,5 +563,8 @@ impl Controller {
 }
 /// Runs the install and update plan before any UI exists; Some means Slate must exit.
 pub fn startup() -> Option<i32> {
+    if !crate::win::instance::claim() {
+        return Some(0);
+    }
     Controller::execute_startup_plan(update::startup_install())
 }

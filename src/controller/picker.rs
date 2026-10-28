@@ -1,6 +1,6 @@
 use super::dto::PickerRow;
 use super::Controller;
-use crate::win::{enumerate_windows, is_blacklisted};
+use crate::win::{enumerate_windows, is_blacklisted, slate_elevated};
 use std::collections::HashSet;
 
 impl Controller {
@@ -23,7 +23,8 @@ impl Controller {
         let eligible: Vec<isize> = self
             .windows
             .iter()
-            .filter(|w| !is_blacklisted(&w.class) && !w.elevated && !hosted.contains(&w.hwnd))
+            .filter(|w| !is_blacklisted(&w.class) && !hosted.contains(&w.hwnd))
+            .filter(|w| !w.elevated || slate_elevated())
             .filter(|w| {
                 !self
                     .rule_for(&w.exe_name)
@@ -44,8 +45,8 @@ impl Controller {
                     .rule_for(&w.exe_name)
                     .is_some_and(|rule| rule.never_host)
                 {
-                    Some("Blocked by an app rule in config.json".to_string())
-                } else if w.elevated {
+                    Some("Blocked by an app rule in settings.json".to_string())
+                } else if w.elevated && !slate_elevated() {
                     Some("Run Slate as administrator to host this".to_string())
                 } else if hosted.contains(&w.hwnd) {
                     Some("Already hosted".to_string())

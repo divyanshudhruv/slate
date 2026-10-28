@@ -23,7 +23,6 @@ use gpui::{px, size, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOp
 fn main() {
     crate::config::paths::ensure_dirs();
     logging::init();
-    win::keys::install();
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--janitor") {
         let path = args.get(i + 1).cloned().unwrap_or_default();
@@ -31,6 +30,8 @@ fn main() {
         win::janitor::run(std::path::PathBuf::from(path), pid);
         return;
     }
+    // The janitor helper must not install the global keyboard hook.
+    win::keys::install();
     if let Some(code) = controller::startup() {
         std::process::exit(code);
     }

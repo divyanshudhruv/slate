@@ -3,8 +3,8 @@ use ely_gpui_component::theme::HUE_NAMES;
 use super::Controller;
 use crate::core::{GroupId, TabId};
 use crate::win::{
-    activate_window, close_window, is_blacklisted, move_window, register_member, unregister_member,
-    Shortcut,
+    activate_window, close_window, is_blacklisted, move_window, register_member, slate_elevated,
+    unregister_member, Shortcut,
 };
 
 impl Controller {
@@ -15,7 +15,7 @@ impl Controller {
         let Some(identity) = self.windows.iter().find(|w| w.hwnd == hwnd).cloned() else {
             return;
         };
-        if is_blacklisted(&identity.class) || identity.elevated {
+        if is_blacklisted(&identity.class) || (identity.elevated && !slate_elevated()) {
             return;
         }
         let rule = self.rule_for(&identity.exe_name).cloned();

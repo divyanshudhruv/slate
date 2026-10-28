@@ -3,7 +3,7 @@ use gpui::Context;
 use super::dto::pick_toast;
 use super::Controller;
 use crate::win::{
-    content_rect_screen, ctrl_held, enumerate_windows, is_blacklisted, window_rect,
+    content_rect_screen, ctrl_held, enumerate_windows, is_blacklisted, slate_elevated, window_rect,
     window_under_cursor, Highlight, KeyboardCapture, PickKey,
 };
 
@@ -82,7 +82,7 @@ impl Controller {
         self.windows
             .iter()
             .find(|w| w.hwnd == hwnd)
-            .is_some_and(|w| !is_blacklisted(&w.class) && !w.elevated)
+            .is_some_and(|w| !is_blacklisted(&w.class) && (!w.elevated || slate_elevated()))
     }
 
     fn drag_target_ok(&self, hwnd: isize) -> bool {

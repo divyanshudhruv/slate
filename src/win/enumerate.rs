@@ -9,7 +9,7 @@ use windows::Win32::System::Threading::PROCESS_NAME_WIN32;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GW_OWNER,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 thread_local! {
@@ -49,10 +49,11 @@ unsafe fn is_candidate(hwnd: HWND) -> bool {
     if !IsWindowVisible(hwnd).as_bool() {
         return false;
     }
-    if GetWindow(hwnd, GW_OWNER).is_ok() {
+    let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+    // Owned windows are usually dialogs, but a main window that declares WS_EX_APPWINDOW wants its own taskbar entry and is worth hosting.
+    if GetWindow(hwnd, GW_OWNER).is_ok() && ex & WS_EX_APPWINDOW.0 == 0 {
         return false;
     }
-    let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
     if ex & WS_EX_TOOLWINDOW.0 != 0 || ex & WS_EX_NOACTIVATE.0 != 0 {
         return false;
     }
