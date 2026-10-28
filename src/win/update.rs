@@ -47,19 +47,37 @@ pub fn bootstrap(source: &str) -> Result<(), String> {
         ));
     }
     let backup = install::backup_path(&canonical);
-    if install::needs_backup(canonical.exists(), backup.exists()) {
-        fs::rename(&canonical, &backup).map_err(|err| format!("backup: {err}"))?;
+    let had_backup = backup.exists();
+    if install::needs_backup(canonical.exists(), had_backup) {
+        if let Err(err) = fs::rename(&canonical, &backup) {
+            return Err(format!("backup: {err}"));
+        }
     }
-    fs::rename(&staged, &canonical).map_err(|err| format!("publish: {err}"))?;
+    if let Err(err) = fs::rename(&staged, &canonical) {
+        restore_backup(&backup, &canonical);
+        return Err(format!("publish: {err}"));
+    }
     if !config::save_install(&config::InstallRecord {
         path: canonical.to_string_lossy().into_owned(),
         version: version.clone(),
         pid: std::process::id(),
     }) {
+        restore_backup(&backup, &canonical);
         return Err("failed to write install record".to_string());
     }
     info!("bootstrap complete version {version}");
     Ok(())
+}
+
+/// Puts the previous exe back when a publish step fails midway.
+fn restore_backup(backup: &Path, canonical: &Path) {
+    if !backup.exists() {
+        return;
+    }
+    let _ = fs::remove_file(canonical);
+    if let Err(err) = fs::rename(backup, canonical) {
+        error!("rollback failed: {err}");
+    }
 }
 
 /// Copies a pre-0.5 install into the install dir, then relaunches it there.
@@ -239,13 +257,26 @@ fn file_hash(path: &Path) -> Result<String, String> {
     Ok(hex::encode(result))
 }
 
+fn cmd_exe() -> std::path::PathBuf {
+    let shell = std::env::var_os("SystemRoot")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("C:\\Windows"))
+        .join("System32")
+        .join("cmd.exe");
+    if shell.is_file() {
+        return shell;
+    }
+    std::env::var_os("ComSpec")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("cmd.exe"))
+}
+
 pub fn spawn_swap_helper(pid: u32, target: &Path, staged: &Path) -> Result<(), String> {
     let dir = config::staging_updates_dir();
     let name = swap_helper_name(pid);
     std::fs::write(dir.join(&name), helper_script(pid, target, staged))
         .map_err(|err| format!("helper: {err}"))?;
-    let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
-    Command::new(comspec)
+    Command::new(cmd_exe())
         .current_dir(&dir)
         .args(["/c"])
         .arg(&name)

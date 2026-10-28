@@ -34,7 +34,10 @@ impl Janitor {
         let Some(path) = self.path.clone() else {
             return;
         };
-        let bytes = encode(slate_hwnd, members);
+        let Some(key) = hmac_key() else {
+            return;
+        };
+        let bytes = encode(&key, slate_hwnd, members);
         if self.last.as_deref() == Some(bytes.as_slice()) {
             return;
         }
@@ -49,7 +52,34 @@ impl Janitor {
 }
 
 pub fn state_path() -> PathBuf {
-    std::env::temp_dir().join(format!("slate-janitor-{}.bin", std::process::id()))
+    let dir = crate::config::paths::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("janitor-{}.bin", std::process::id()))
+}
+
+fn hmac_key() -> Option<[u8; 32]> {
+    static KEY: std::sync::OnceLock<Option<[u8; 32]>> = std::sync::OnceLock::new();
+    *KEY.get_or_init(load_or_create_key)
+}
+
+fn load_or_create_key() -> Option<[u8; 32]> {
+    let path = crate::config::paths::data_dir().join("janitor.key");
+    if let Ok(bytes) = std::fs::read(&path) {
+        return bytes.try_into().ok();
+    }
+    let mut key = [0u8; 32];
+    let generated = unsafe {
+        use windows::Win32::Security::Cryptography::{
+            BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        };
+        BCryptGenRandom(None, &mut key, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+    };
+    if generated.is_err() {
+        return None;
+    }
+    let _ = std::fs::create_dir_all(crate::config::paths::data_dir());
+    std::fs::write(&path, key).ok()?;
+    Some(key)
 }
 
 pub fn spawn(path: &Path) {
@@ -57,12 +87,7 @@ pub fn spawn(path: &Path) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
-    let _ = std::process::Command::new(comspec)
-        .arg("/c")
-        .arg("start")
-        .arg("")
-        .arg(&exe)
+    let _ = std::process::Command::new(exe)
         .arg("--janitor")
         .arg(path)
         .arg(std::process::id().to_string())
@@ -71,7 +96,7 @@ pub fn spawn(path: &Path) {
 }
 
 pub fn sweep_stale() {
-    let dir = std::env::temp_dir();
+    let dir = crate::config::paths::data_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };
@@ -96,7 +121,7 @@ pub fn sweep_stale() {
 }
 
 fn parse_state_name(name: &str) -> Option<u32> {
-    name.strip_prefix("slate-janitor-")?
+    name.strip_prefix("janitor-")?
         .strip_suffix(".bin")?
         .parse()
         .ok()
@@ -156,7 +181,10 @@ fn watch(pid: u32) -> windows::core::Result<()> {
 }
 
 fn restore(bytes: &[u8]) {
-    let Some((slate_hwnd, members)) = decode(bytes) else {
+    let Some(key) = hmac_key() else {
+        return;
+    };
+    let Some((slate_hwnd, members)) = decode(&key, bytes) else {
         return;
     };
     for (hwnd, st) in members {
