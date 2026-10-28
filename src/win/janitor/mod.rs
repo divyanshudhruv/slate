@@ -18,16 +18,26 @@ pub struct Janitor {
     path: Option<PathBuf>,
     started: bool,
     last: Option<Vec<u8>>,
+    recovered: Vec<isize>,
 }
 
 impl Janitor {
     pub fn new() -> Self {
-        sweep_stale();
         Self {
             path: Some(state_path()),
             started: false,
             last: None,
+            recovered: sweep_stale(),
         }
+    }
+
+    /// Windows the janitor freed after a crash, offered back as a session restore.
+    pub fn recovered(&self) -> &[isize] {
+        &self.recovered
+    }
+
+    pub fn clear_recovered(&mut self) {
+        self.recovered.clear();
     }
 
     pub fn persist(&mut self, slate_hwnd: isize, members: &[(isize, StylingState)]) {
@@ -95,10 +105,11 @@ pub fn spawn(path: &Path) {
         .spawn();
 }
 
-pub fn sweep_stale() {
+pub fn sweep_stale() -> Vec<isize> {
     let dir = crate::config::paths::data_dir();
+    let mut recovered = Vec::new();
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return;
+        return recovered;
     };
     let me = std::process::id();
     for entry in entries.flatten() {
@@ -114,10 +125,11 @@ pub fn sweep_stale() {
             continue;
         }
         if let Ok(bytes) = std::fs::read(entry.path()) {
-            restore(&bytes);
+            recovered.extend(restore(&bytes));
         }
         let _ = std::fs::remove_file(entry.path());
     }
+    recovered
 }
 
 fn parse_state_name(name: &str) -> Option<u32> {
@@ -156,7 +168,7 @@ pub fn run(path: PathBuf, pid: u32) {
     hide_console();
     let _ = watch(pid);
     if let Ok(bytes) = std::fs::read(&path) {
-        restore(&bytes);
+        let _ = restore(&bytes);
     }
     let _ = std::fs::remove_file(&path);
 }
@@ -180,12 +192,13 @@ fn watch(pid: u32) -> windows::core::Result<()> {
     Ok(())
 }
 
-fn restore(bytes: &[u8]) {
+fn restore(bytes: &[u8]) -> Vec<isize> {
+    let mut restored = Vec::new();
     let Some(key) = hmac_key() else {
-        return;
+        return restored;
     };
     let Some((slate_hwnd, members)) = decode(&key, bytes) else {
-        return;
+        return restored;
     };
     for (hwnd, st) in members {
         unsafe {
@@ -198,5 +211,7 @@ fn restore(bytes: &[u8]) {
             }
         }
         unregister_member(hwnd, &st);
+        restored.push(hwnd);
     }
+    restored
 }

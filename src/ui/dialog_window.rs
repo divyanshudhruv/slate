@@ -20,7 +20,78 @@ pub(super) fn in_host_dialog(
     match kind {
         SlateDialog::Keybinds => Some(keybinds_dialog(controller, cx)),
         SlateDialog::Update => Some(update_dialog(controller, cx)),
+        SlateDialog::Recovery => Some(recovery_dialog(controller, cx)),
     }
+}
+
+fn recovery_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElement {
+    let theme = cx.theme();
+    let count = controller.read(cx).recovered_count();
+    let title = if count == 1 {
+        "Restore last window?".to_string()
+    } else {
+        "Restore last session?".to_string()
+    };
+    let note = if count == 1 {
+        "Slate closed unexpectedly and freed one window. Open it as a tab again?".to_string()
+    } else {
+        format!("Slate closed unexpectedly and freed {count} windows. Open them as tabs again?")
+    };
+    let restore = {
+        let ctrl = controller.clone();
+        move |_ev: &gpui::ClickEvent, _w: &mut Window, cx: &mut App| {
+            ctrl.update(cx, |c, cx| c.dispatch(Cmd::RestoreRecovered, cx));
+        }
+    };
+    let dismiss = {
+        let ctrl = controller.clone();
+        move |_ev: &gpui::ClickEvent, _w: &mut Window, cx: &mut App| {
+            ctrl.update(cx, |c, cx| c.dispatch(Cmd::DismissRecovered, cx));
+        }
+    };
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .p(px(28.0))
+        .child(
+            Icon::new(IconName::Archive)
+                .size(IconSize::Lg)
+                .color(theme.colors.accent),
+        )
+        .child(
+            div()
+                .text_size(px(18.0))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme.colors.fg)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(px(13.0))
+                .text_color(theme.colors.fg_muted)
+                .child(note),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .mt_2()
+                .child(
+                    Button::new("rec-later", "Not now")
+                        .variant(ely_gpui_component::buttons::ButtonVariant::Ghost)
+                        .on_click(dismiss),
+                )
+                .child(
+                    Button::new("rec-now", "Restore")
+                        .primary()
+                        .on_click(restore),
+                ),
+        )
+        .into_any_element()
 }
 
 fn stroke_of(chord: Chord) -> Option<Keystroke> {

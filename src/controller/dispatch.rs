@@ -139,6 +139,14 @@ impl Controller {
             Cmd::SetKeybindChord { action, chord } => self.set_keybind_chord(action, chord, cx),
             Cmd::ResetKeybinds => self.reset_keybinds(cx),
             Cmd::CommitKeybinds => self.commit_keybinds(cx),
+            Cmd::RestoreRecovered => {
+                self.restore_recovered();
+                self.close_dialog();
+            }
+            Cmd::DismissRecovered => {
+                self.dismiss_recovered();
+                self.close_dialog();
+            }
         }
         self.sync_worker();
         cx.notify();

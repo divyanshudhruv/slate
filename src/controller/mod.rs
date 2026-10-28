@@ -76,6 +76,7 @@ pub struct Controller {
     info_cache: RefCell<Option<Arc<HostInfo>>>,
     index_cache: RefCell<Option<Index>>,
     save_error: RefCell<Option<String>>,
+    recovered: Vec<isize>,
     _pump: Option<WinEventPump>,
 }
 
@@ -95,7 +96,9 @@ impl Controller {
             crate::core::update::CURRENT_VERSION,
             settings.updates.latest.as_deref(),
         );
-        let controller = Self {
+        let janitor = Janitor::new();
+        let recovered = janitor.recovered().to_vec();
+        let mut controller = Self {
             windows: enumerate_windows(),
             groups: GroupSet::new(),
             active_group: None,
@@ -103,7 +106,8 @@ impl Controller {
             titlebar: 0.0,
             styling: HashMap::new(),
             worker: HostWorker::new(),
-            janitor: Janitor::new(),
+            janitor,
+            recovered,
             picking: false,
             hovered: None,
             pick_gen: 0,
@@ -150,6 +154,9 @@ impl Controller {
         Self::start_event_pump(cx);
         controller.apply_theme(cx);
         dialog::push_shortcuts(&controller.settings);
+        if !controller.recovered.is_empty() {
+            controller.dialog = Some(Dialog::Recovery);
+        }
         controller
     }
 
@@ -480,6 +487,30 @@ impl Controller {
             .rules
             .iter()
             .find(|rule| !rule.exe.is_empty() && rule.exe.eq_ignore_ascii_case(exe_name))
+    }
+
+    pub fn recovered_count(&self) -> usize {
+        self.recovered.len()
+    }
+
+    /// Re-hosts the windows the janitor freed after a crash, in the order it reported them.
+    pub(super) fn restore_recovered(&mut self) {
+        let recovered = std::mem::take(&mut self.recovered);
+        self.janitor.clear_recovered();
+        if recovered.is_empty() || self.host_hwnd.is_none() {
+            return;
+        }
+        self.windows = enumerate_windows();
+        for hwnd in recovered {
+            if self.windows.iter().any(|w| w.hwnd == hwnd) {
+                self.add_window(hwnd);
+            }
+        }
+    }
+
+    pub(super) fn dismiss_recovered(&mut self) {
+        self.recovered.clear();
+        self.janitor.clear_recovered();
     }
 }
 /// Runs the install and update plan before any UI exists; Some means Slate must exit.
