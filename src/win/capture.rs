@@ -6,7 +6,7 @@ use windows::Win32::Graphics::Gdi::{
     GetDIBits, ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO,
     BITMAPINFOHEADER, DIB_RGB_COLORS, HALFTONE, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, IsIconic};
+use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetForegroundWindow, IsIconic};
 
 const MAX_W: i32 = 640;
 
@@ -29,7 +29,21 @@ pub fn capture_window(hwnd: isize) -> Option<WindowSnapshot> {
     if hwnd == 0 {
         return None;
     }
-    unsafe { grab(hwnd) }
+    for _ in 0..2 {
+        if let Some(snapshot) = unsafe { grab_once(hwnd) } {
+            return Some(snapshot);
+        }
+        POOL.with(|pool| *pool.borrow_mut() = None);
+    }
+    None
+}
+
+/// Swaps the BGR channel order Windows hands back for RGBA.
+pub fn bgra_to_rgba(mut bytes: Vec<u8>) -> Vec<u8> {
+    for px in bytes.as_chunks_mut::<4>().0 {
+        px.swap(0, 2);
+    }
+    bytes
 }
 
 struct ScreenDc(HDC);
@@ -66,7 +80,7 @@ thread_local! {
     static POOL: RefCell<Option<Pooled>> = const { RefCell::new(None) };
 }
 
-unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
+unsafe fn grab_once(hwnd: isize) -> Option<WindowSnapshot> {
     let h = HWND(hwnd as *mut _);
     if IsIconic(h).as_bool() {
         return None;
@@ -75,10 +89,6 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
     GetClientRect(h, &mut rc).ok()?;
     let (w, hgt) = (rc.right - rc.left, rc.bottom - rc.top);
     if w <= 0 || hgt <= 0 {
-        return None;
-    }
-    let mut origin = POINT::default();
-    if !ClientToScreen(h, &mut origin).as_bool() {
         return None;
     }
 
@@ -120,40 +130,40 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
     };
 
     let old = SelectObject(pooled.mem.0, HGDIOBJ(pooled.bmp.0 .0));
-    SetStretchBltMode(pooled.mem.0, HALFTONE);
-    let drawn = StretchBlt(
-        pooled.mem.0,
-        0,
-        0,
-        tw,
-        th,
-        Some(screen.0),
-        origin.x,
-        origin.y,
-        w,
-        hgt,
-        SRCCOPY,
-    )
-    .as_bool();
-    let mut bgra = drawn
-        .then(|| read_pixels(pooled.mem.0, pooled.bmp.0, tw, th))
-        .flatten()
-        .filter(|pixels| !is_flat(pixels));
-    if bgra.is_none() {
-        bgra = print_window(h, pooled.mem.0, pooled.bmp.0, w, hgt, tw, th);
-    }
-    if bgra.is_none() {
-        // Fallback to a fresh bitmap/target to avoid reusing a possibly corrupted pooled frame
-        POOL.with(|p| *p.borrow_mut() = None);
-        return grab(hwnd);
+    // The window draws itself first, so an occluded window never leaks pixels.
+    let mut bgra = print_window(h, pooled.mem.0, pooled.bmp.0, w, hgt, tw, th);
+    // Screen pixels are only trusted for the window the user is looking at.
+    if bgra.is_none() && GetForegroundWindow() == h {
+        let mut origin = POINT::default();
+        if ClientToScreen(h, &mut origin).as_bool() {
+            SetStretchBltMode(pooled.mem.0, HALFTONE);
+            let drawn = StretchBlt(
+                pooled.mem.0,
+                0,
+                0,
+                tw,
+                th,
+                Some(screen.0),
+                origin.x,
+                origin.y,
+                w,
+                hgt,
+                SRCCOPY,
+            )
+            .as_bool();
+            if drawn {
+                bgra = read_pixels(pooled.mem.0, pooled.bmp.0, tw, th).filter(|px| !is_flat(px));
+            }
+        }
     }
     SelectObject(pooled.mem.0, old);
+    let bgra = bgra?;
     POOL.with(|p| *p.borrow_mut() = Some(pooled));
 
     Some(WindowSnapshot {
         width: tw as u32,
         height: th as u32,
-        bgra: bgra?,
+        bgra,
     })
 }
 
@@ -238,4 +248,17 @@ unsafe fn read_pixels(mem: HDC, bmp: HBITMAP, width: i32, height: i32) -> Option
         px[3] = 0xFF;
     }
     Some(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bgra_to_rgba;
+
+    #[test]
+    fn bgra_becomes_rgba() {
+        assert_eq!(
+            bgra_to_rgba(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+            vec![3, 2, 1, 4, 7, 6, 5, 8]
+        );
+    }
 }
