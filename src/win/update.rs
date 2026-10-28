@@ -144,7 +144,12 @@ pub fn fetch_latest() -> Result<String, String> {
         })?;
     let status = res.status();
     if status.as_u16() == 403 || status.as_u16() == 429 {
-        return Err("GitHub is rate-limiting update checks (60/hour) - try later".to_string());
+        let reset = res
+            .headers()
+            .get("x-ratelimit-reset")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i64>().ok());
+        return Err(rate_limit_message(reset, chrono_now()));
     }
     if status.as_u16() == 404 {
         return Err("No releases published yet".to_string());
@@ -162,6 +167,24 @@ pub fn fetch_latest() -> Result<String, String> {
         ));
     }
     Ok(release.version)
+}
+
+/// Turns GitHub's reset timestamp into a wait the user can act on.
+fn rate_limit_message(reset: Option<i64>, now: i64) -> String {
+    match reset.map(|at| (at - now) / 60) {
+        Some(wait) if wait > 0 => {
+            format!("GitHub is rate-limiting update checks - try again in about {wait} min")
+        }
+        Some(_) => "GitHub is rate-limiting update checks - try again shortly".to_string(),
+        None => "GitHub is rate-limiting update checks (60/hour) - try later".to_string(),
+    }
+}
+
+fn chrono_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 pub fn asset_arch() -> &'static str {
@@ -355,6 +378,14 @@ mod tests {
             crate::timings::SWAP_WAIT_SECS
         )));
         assert!(script.contains("timeout /t 1 /nobreak"));
+    }
+
+    #[test]
+    fn rate_limit_waits_for_the_reset_header() {
+        assert!(rate_limit_message(Some(1_000 + 1_200), 1_000).contains("20 min"));
+        assert!(rate_limit_message(Some(1_000 + 30), 1_000).contains("shortly"));
+        assert!(rate_limit_message(Some(900), 1_000).contains("shortly"));
+        assert!(rate_limit_message(None, 1_000).contains("60/hour"));
     }
 
     #[test]
