@@ -1,15 +1,15 @@
 name: CI
 
-# One run per change, not four:
-#   - a push to development is checked once,
-#   - a pull request into main is checked once (as the merge result),
-#   - merging does not re-run anything: the tree was already checked by the PR,
+# Where it runs:
+#   - a pull request into development or main is checked as the merge result,
+#   - a push to development is checked too: it covers direct commits and is the
+#     only run allowed to write the cargo cache,
 #   - releases are compiled by release.yml, never here.
 on:
   push:
     branches: [development]
   pull_request:
-    branches: [main]
+    branches: [development, main]
   workflow_dispatch:
 
 permissions:

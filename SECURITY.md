@@ -60,8 +60,8 @@ What Slate trusts, what it does not, and what a bug costs.
   verified against the release checksum before the swap helper runs.
 - Config files are user-editable and may be hand-mangled or written by an older
   or newer build. Unknown fields survive a save, mistyped fields fall back to
-  defaults with a log warning, and files newer than the schema are backed up
-  instead of being overwritten.
+  defaults with a log warning, and a file newer than the schema is left in place
+  with saving disabled.
 
 ### Realistic attackers
 

@@ -1,7 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use super::Controller;
+use super::{Cmd, Controller};
 use crate::config;
 use crate::core::{match_tabs, TabHint, Target};
 use crate::win::{enumerate_windows, is_blacklisted, slate_elevated, window_rect};
@@ -14,6 +14,41 @@ impl Controller {
             self.refresh_saved_avail();
         }
         self.menus.saved_menu_open = open;
+        self.menus.saved_menu_cursor = None;
+    }
+
+    /// True when the save row can run, which needs at least one tab in the active group.
+    fn can_save(&self) -> bool {
+        self.active_group
+            .and_then(|id| self.groups.group(id))
+            .is_some_and(|group| !group.tabs.is_empty())
+    }
+
+    /// Walks the saved-menu cursor over the save row and the sets, wrapping at both ends.
+    pub(super) fn move_saved_menu_cursor(&mut self, delta: isize) {
+        let enabled: Vec<usize> = (0..=self.saved_sets.len())
+            .filter(|ix| *ix > 0 || self.can_save())
+            .collect();
+        self.menus.saved_menu_cursor =
+            crate::core::step_cursor(self.menus.saved_menu_cursor, &enabled, delta);
+    }
+
+    /// Runs the row the saved-menu cursor sits on.
+    pub(super) fn confirm_saved_menu_cursor(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(ix) = self.menus.saved_menu_cursor else {
+            return;
+        };
+        if ix == 0 {
+            if self.can_save() {
+                self.dispatch(Cmd::BeginSaveSet, cx);
+            }
+            return;
+        }
+        let Some(id) = self.saved_sets.get(ix - 1).map(|set| set.id) else {
+            return;
+        };
+        self.dispatch(Cmd::RestoreSet { id }, cx);
+        self.dispatch(Cmd::SetSavedMenu(false), cx);
     }
 
     pub(super) fn refresh_saved_avail(&mut self) {

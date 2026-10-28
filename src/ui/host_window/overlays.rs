@@ -1,14 +1,10 @@
-use std::rc::Rc;
-
 use ely_gpui_component::motion;
 use ely_gpui_component::theme::{ActiveTheme, Elevation, Radius};
 use gpui::{
     canvas, div, px, Animation, AnimationExt, App, Bounds, Div, Entity, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Pixels, Point, Role, Size, StatefulInteractiveElement,
-    Styled, Window,
+    Styled,
 };
-
-pub(super) type Action = Rc<dyn Fn(&mut Window, &mut App)>;
 
 pub(super) use crate::ui::metrics::{MENU_W, MENU_W_SAVED, MENU_W_TAB_MENU};
 use crate::ui::metrics::{OVERLAY_MARGIN, PANEL_PAD, ROW_H};

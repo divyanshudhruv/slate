@@ -65,13 +65,21 @@ impl Controller {
             Cmd::CloseTabsToLeft { group, tab } => self.close_tabs_to_left(group, tab),
             Cmd::OpenTabMenu { tab, at } => {
                 self.menus.tab_menu = Some(TabMenu { tab, at });
+                self.menus.ctx_menu_cursor = None;
                 self.menus.tab_menu_open = false;
                 self.menus.picker_open = false;
                 self.menus.saved_menu_open = false;
             }
-            Cmd::CloseTabMenu => self.menus.tab_menu = None,
+            Cmd::CloseTabMenu => {
+                self.menus.tab_menu = None;
+                self.menus.ctx_menu_cursor = None;
+            }
+            Cmd::MoveContextMenuCursor { delta } => self.move_ctx_menu_cursor(delta),
+            Cmd::ConfirmContextMenuCursor => self.confirm_ctx_menu_cursor(cx),
+            Cmd::CopyTabPath { tab } => self.copy_tab_path(tab, cx),
             Cmd::BeginRename { group, tab } => {
                 self.menus.tab_menu = None;
+                self.menus.ctx_menu_cursor = None;
                 self.menus.renaming = Some((group, tab));
             }
             Cmd::CancelRename => self.menus.renaming = None,
@@ -94,13 +102,17 @@ impl Controller {
                 let open = !self.menus.saved_menu_open;
                 self.set_saved_menu(open);
             }
+            Cmd::MoveSavedMenuCursor { delta } => self.move_saved_menu_cursor(delta),
+            Cmd::ConfirmSavedMenuCursor => self.confirm_saved_menu_cursor(cx),
             Cmd::BeginSaveSet => {
                 self.menus.saved_menu_open = false;
+                self.menus.saved_menu_cursor = None;
                 self.menus.saved_prompt = Some(SavedPrompt::Save);
             }
             Cmd::BeginRenameSet { id } => {
                 if self.saved_sets.iter().any(|s| s.id == id) {
                     self.menus.saved_menu_open = false;
+                    self.menus.saved_menu_cursor = None;
                     self.menus.saved_prompt = Some(SavedPrompt::Rename(id));
                 }
             }
@@ -163,8 +175,10 @@ impl Controller {
     pub(super) fn close_other_dropdowns(&mut self) {
         self.menus.picker_open = false;
         self.menus.saved_menu_open = false;
+        self.menus.saved_menu_cursor = None;
         self.menus.tab_menu_open = false;
         self.menus.tab_menu_cursor = None;
         self.menus.tab_menu = None;
+        self.menus.ctx_menu_cursor = None;
     }
 }

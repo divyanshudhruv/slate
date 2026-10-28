@@ -12,8 +12,8 @@ mod tabs;
 mod update;
 
 pub use dto::{
-    BannerAction, BannerKind, BannerView, Cmd, Dialog, HostInfo, HoverPreview, PickerRow,
-    SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
+    BannerAction, BannerKind, BannerView, Cmd, ContextMenuItem, Dialog, HostInfo, HoverPreview,
+    PickerRow, SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
 };
 
 use gpui::{Context, RenderImage, SharedString};
@@ -79,7 +79,9 @@ struct Menus {
     picker_cursor: Option<usize>,
     saved_menu_open: bool,
     saved_prompt: Option<SavedPrompt>,
+    saved_menu_cursor: Option<usize>,
     tab_menu: Option<TabMenu>,
+    ctx_menu_cursor: Option<usize>,
     renaming: Option<(GroupId, TabId)>,
     hover_preview: Option<HoverPreview>,
     hover_tab: Option<TabId>,
@@ -374,7 +376,6 @@ impl Controller {
                                 .and_then(|rule| rule.label.clone())
                                 .unwrap_or_else(|| app_name(&t.window.exe_name)),
                             exe: t.window.exe_name.clone(),
-                            exe_path: t.window.exe_path.clone(),
                             icon: self.icons.get(&t.window.hwnd).cloned().flatten(),
                             accent: self.tab_colors.get(&t.window.hwnd).copied(),
                         })
@@ -410,6 +411,9 @@ impl Controller {
                 .collect(),
             saved_prompt: self.menus.saved_prompt,
             tab_menu: self.menus.tab_menu.clone(),
+            ctx_menu_items: self.ctx_menu_items(),
+            ctx_menu_cursor: self.menus.ctx_menu_cursor,
+            saved_menu_cursor: self.menus.saved_menu_cursor,
             renaming: self.menus.renaming,
             picking: self.picking,
             hover_preview: self.menus.hover_preview.clone(),
@@ -450,6 +454,8 @@ impl Controller {
         self.menus.picker_rows.clear();
         self.menus.picker_cursor = None;
         self.menus.tab_menu = None;
+        self.menus.ctx_menu_cursor = None;
+        self.menus.saved_menu_cursor = None;
         self.menus.renaming = None;
         self.rename_overrides.clear();
         self.drag = None;

@@ -196,6 +196,8 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `Ctrl+W`                         | Return the active tab's window to the desktop |
 | Ctrl-drag a window onto the host | Add it as a tab                               |
 | Hover a window, then `TAB`       | Add it as a tab (pick mode)                   |
+| `Up` / `Down` in a menu          | Move the highlighted row                      |
+| `Enter` in a menu                | Run the highlighted row                       |
 | `Esc`                            | Cancel pick mode or dismiss a menu            |
 
 ## Files and data
@@ -210,8 +212,8 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `%LOCALAPPDATA%\Burntfern\Slate\install.json` | Registered copy (path, version, pid) used by updates and single-instance checks |
 | `%LOCALAPPDATA%\Burntfern\Slate\instance.pid` | Pid of the copy that owns this data folder |
 | `%LOCALAPPDATA%\Burntfern\Slate\update-pending.json` | Written before a swap, cleared on the first frame; a build that never starts is rolled back |
-| `%LOCALAPPDATA%\Burntfern\Slate\janitor.key` | DPAPI-protected key that signs the crash-recovery payload |
-| `%LOCALAPPDATA%\Burntfern\Slate\janitor-<pid>.bin` | Crash-recovery payload for windows owned by a dead process |
+| `%LOCALAPPDATA%\Burntfern\Slate\janitor.key` | DPAPI-protected key that signs the janitor payload |
+| `%LOCALAPPDATA%\Burntfern\Slate\janitor-<pid>.bin` | Windows a dead Slate owned, replayed on the next launch |
 | `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
 | `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap helper |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |

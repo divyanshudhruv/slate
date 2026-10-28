@@ -1,21 +1,19 @@
-use std::rc::Rc;
-
 use ely_gpui_component::buttons::IconButton;
 use ely_gpui_component::primitives::{Icon, IconName, Image};
 use ely_gpui_component::theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize, HUE_NAMES};
 use ely_gpui_component::typography::{Ellipsis, Kbd};
 use gpui::prelude::*;
 use gpui::{
-    div, px, AnyElement, App, Bounds, ClipboardItem, Div, Entity, FontWeight, MouseButton, Point,
-    Role, Styled, Window,
+    div, px, AnyElement, App, Bounds, Div, ElementId, Entity, FontWeight, Hsla, MouseButton, Point,
+    Rems, Role, Styled, Window,
 };
 
 use super::overlays::{
-    anchor_probe, enter_animation, menu_height, menu_panel, overlay_layer, Action, MENU_W,
-    MENU_W_SAVED, MENU_W_TAB_MENU,
+    anchor_probe, enter_animation, menu_height, menu_panel, overlay_layer, MENU_W, MENU_W_SAVED,
+    MENU_W_TAB_MENU,
 };
 use super::HostCtx;
-use crate::controller::{Cmd, Controller, PickerRow, SavedSetInfo, TabInfo};
+use crate::controller::{Cmd, ContextMenuItem, Controller, PickerRow, SavedSetInfo, TabInfo};
 use crate::core::{GroupId, TabId};
 
 use crate::ui::metrics::{
@@ -215,9 +213,19 @@ pub(super) fn saved(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
         let save_enabled = !info.tabs.is_empty();
         let mut rows: Vec<AnyElement> = Vec::with_capacity(info.saved_sets.len() + 1);
 
-        rows.push(saved_save_row(save_enabled, &controller, ctx.cx));
-        for set in info.saved_sets.iter() {
-            rows.push(saved_set_row(set, &controller, ctx.cx));
+        rows.push(saved_save_row(
+            save_enabled,
+            info.saved_menu_cursor == Some(0),
+            &controller,
+            ctx.cx,
+        ));
+        for (ix, set) in info.saved_sets.iter().enumerate() {
+            rows.push(saved_set_row(
+                set,
+                info.saved_menu_cursor == Some(ix + 1),
+                &controller,
+                ctx.cx,
+            ));
         }
 
         if info.saved_sets.is_empty() {
@@ -259,132 +267,37 @@ pub(super) fn tab_menu(ctx: &mut HostCtx) -> Option<(Point<gpui::Pixels>, gpui::
         (group, menu.tab, menu.at)
     };
 
-    let ix = info.tabs.iter().position(|t| t.id == tab);
-    let can_right = ix.is_some_and(|ix| ix + 1 < info.tabs.len());
-    let can_left = ix.is_some_and(|ix| ix > 0);
-    let tab_count = info.tabs.len();
+    let accent_now = info
+        .tabs
+        .iter()
+        .find(|t| t.id == tab)
+        .and_then(|t| t.accent);
 
-    let ungroup = close_menu_action(&controller, group, tab, |group, tab| Cmd::Ungroup {
+    let mut rows: Vec<AnyElement> = Vec::with_capacity(info.ctx_menu_items.len() + 2);
+    rows.push(accent_row(
+        accent_now,
         group,
         tab,
-    });
-    let close = close_menu_action(&controller, group, tab, |group, tab| Cmd::CloseTab {
-        group,
-        tab,
-    });
-    let others = close_menu_action(&controller, group, tab, |group, tab| Cmd::CloseOtherTabs {
-        group,
-        tab,
-    });
-    let left = close_menu_action(&controller, group, tab, |group, tab| Cmd::CloseTabsToLeft {
-        group,
-        tab,
-    });
-    let right = close_menu_action(&controller, group, tab, |group, tab| {
-        Cmd::CloseTabsToRight { group, tab }
-    });
-    let rename = close_menu_action(&controller, group, tab, |group, tab| Cmd::BeginRename {
-        group,
-        tab,
-    });
-    let exe_path = ix
-        .and_then(|ix| info.tabs.get(ix))
-        .map(|t| t.exe_path.clone())
-        .unwrap_or_default();
-    let copy_path = {
-        let path = exe_path.clone();
-        let ctrl = controller.clone();
-        Rc::new(move |_w: &mut Window, cx: &mut gpui::App| {
-            cx.write_to_clipboard(ClipboardItem::new_string(path.clone()));
-            ctrl.update(cx, |c, cx| c.dispatch(Cmd::CloseTabMenu, cx));
-        }) as Action
-    };
+        &controller,
+        &ctx.palette,
+        ctx.cx,
+    ));
+    for (ix, item) in info.ctx_menu_items.iter().enumerate() {
+        if item.starts_group {
+            rows.push(menu_divider(ix, ctx.cx));
+        }
+        rows.push(ctx_menu_row(
+            item,
+            info.ctx_menu_cursor == Some(ix),
+            &controller,
+            ctx.cx,
+        ));
+    }
 
-    let accent_now = ix.and_then(|i| info.tabs.get(i)).and_then(|t| t.accent);
-
-    let rows = vec![
-        accent_row(accent_now, group, tab, &controller, &ctx.palette, ctx.cx),
-        menu_divider("ctx-divider-color", ctx.cx),
-        menu_item(
-            MenuItem::new(
-                "ctx-rename",
-                "Rename\u{2026}",
-                IconName::Pencil,
-                true,
-                rename,
-            ),
-            ctx.cx,
-        ),
-        menu_item(
-            MenuItem::new(
-                "ctx-copy-path",
-                "Copy exe path",
-                IconName::Copy,
-                !exe_path.is_empty(),
-                copy_path,
-            ),
-            ctx.cx,
-        ),
-        menu_divider("ctx-divider-a", ctx.cx),
-        menu_item(
-            MenuItem::new(
-                "ctx-others",
-                "Close others",
-                IconName::AppWindow,
-                tab_count > 1,
-                others,
-            ),
-            ctx.cx,
-        ),
-        menu_item(
-            MenuItem::new(
-                "ctx-left",
-                "Ungroup to the left",
-                IconName::ChevronLeft,
-                can_left,
-                left,
-            ),
-            ctx.cx,
-        ),
-        menu_item(
-            MenuItem::new(
-                "ctx-right",
-                "Ungroup to the right",
-                IconName::ChevronRight,
-                can_right,
-                right,
-            ),
-            ctx.cx,
-        ),
-        menu_divider("ctx-divider-b", ctx.cx),
-        menu_item(
-            MenuItem::new(
-                "ctx-ungroup",
-                "Ungroup",
-                IconName::ExternalLink,
-                true,
-                ungroup,
-            )
-            .desc("Un-host the window and keep it open"),
-            ctx.cx,
-        ),
-        menu_item(
-            MenuItem::new("ctx-close", "Close", IconName::X, true, close)
-                .desc("Close the window and end its app")
-                .danger(),
-            ctx.cx,
-        ),
-    ];
-
-    let rows_len = rows.len();
-
+    let height = menu_height(rows.len());
     let panel = menu_panel(MENU_W_TAB_MENU, ctx.cx).children(rows);
 
-    Some((
-        gpui::point(px(at.0), px(at.1)),
-        panel,
-        menu_height(rows_len),
-    ))
+    Some((gpui::point(px(at.0), px(at.1)), panel, height))
 }
 
 fn tab_badge(count: usize, cx: &App) -> Div {
@@ -435,6 +348,78 @@ fn row_frame(cx: &App) -> Div {
         .text_size(theme.text_size(TextSize::Sm))
 }
 
+/// One menu row: a leading glyph, a title over an optional muted line, and a trailing slot.
+/// Callers add their own hover, cursor and click behaviour to the built row.
+struct RowShell {
+    id: ElementId,
+    icon: AnyElement,
+    title: String,
+    title_color: Hsla,
+    detail: Option<(String, Hsla)>,
+    trailing: Option<AnyElement>,
+    min_height: Option<Rems>,
+}
+
+impl RowShell {
+    fn new(
+        id: impl Into<ElementId>,
+        icon: AnyElement,
+        title: impl Into<String>,
+        title_color: Hsla,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            icon,
+            title: title.into(),
+            title_color,
+            detail: None,
+            trailing: None,
+            min_height: None,
+        }
+    }
+
+    fn detail(mut self, text: impl Into<String>, color: Hsla) -> Self {
+        self.detail = Some((text.into(), color));
+        self
+    }
+
+    fn trailing(mut self, element: AnyElement) -> Self {
+        self.trailing = Some(element);
+        self
+    }
+
+    fn min_height(mut self, height: Rems) -> Self {
+        self.min_height = Some(height);
+        self
+    }
+
+    fn build(self, cx: &App) -> gpui::Stateful<Div> {
+        let text_xs = cx.theme().text_size(TextSize::Xs);
+        row_frame(cx)
+            .id(self.id)
+            .when_some(self.min_height, |el, height| el.min_h(height))
+            .child(self.icon)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .text_color(self.title_color)
+                    .child(Ellipsis::new(self.title))
+                    .when_some(self.detail, |el, (text, color)| {
+                        el.child(
+                            div()
+                                .text_size(text_xs)
+                                .text_color(color)
+                                .child(Ellipsis::new(text)),
+                        )
+                    }),
+            )
+            .when_some(self.trailing, |el, trailing| el.child(trailing))
+    }
+}
+
 fn overflow_row(
     ix: usize,
     tab: &TabInfo,
@@ -447,19 +432,30 @@ fn overflow_row(
     let theme = cx.theme();
     let colors = &theme.colors;
     let icon_px = theme.icon_size(IconSize::Sm).to_pixels(theme.base_rem());
-    let text_xs = theme.text_size(TextSize::Xs);
     let RowMarks {
         active,
         highlighted,
     } = marks;
     let (app, exe, icon) = (&tab.app, &tab.exe, &tab.icon);
     let tab_id = tab.id;
+    let lead = match (icons_in_tabs, icon) {
+        (true, Some(image)) => Image::new(("tab-overflow-icon", ix), image.clone())
+            .flex_none()
+            .w(icon_px)
+            .h(icon_px)
+            .into_any_element(),
+        _ => Icon::new(IconName::AppWindow)
+            .size(IconSize::Sm)
+            .color(colors.fg_subtle)
+            .into_any_element(),
+    };
+    let title_color = if active { colors.fg } else { colors.fg_muted };
     let ctrl = controller.clone();
-    row_frame(cx)
-        .id(("tab-overflow-row", ix))
+    RowShell::new(("tab-overflow-row", ix), lead, app.clone(), title_color)
+        .detail(exe.clone(), colors.fg_subtle)
+        .build(cx)
         .role(Role::MenuItem)
         .aria_label(app.clone())
-        .text_color(if active { colors.fg } else { colors.fg_muted })
         .cursor_pointer()
         .when(highlighted, |el| el.bg(colors.hover))
         .hover(|style| style.bg(colors.hover))
@@ -477,35 +473,6 @@ fn overflow_row(
                 c.dispatch(Cmd::SetTabMenu(false), cx);
             });
         })
-        .map(|el| match (icons_in_tabs, icon) {
-            (true, Some(image)) => el.child(
-                Image::new(("tab-overflow-icon", ix), image.clone())
-                    .flex_none()
-                    .w(icon_px)
-                    .h(icon_px),
-            ),
-            _ => el.child(
-                Icon::new(IconName::AppWindow)
-                    .size(IconSize::Sm)
-                    .color(colors.fg_subtle),
-            ),
-        })
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    div()
-                        .text_color(if active { colors.fg } else { colors.fg_muted })
-                        .child(Ellipsis::new(app.clone())),
-                )
-                .child(
-                    div()
-                        .text_size(text_xs)
-                        .text_color(colors.fg_subtle)
-                        .child(Ellipsis::new(exe.clone())),
-                ),
-        )
         .into_any_element()
 }
 
@@ -529,27 +496,32 @@ fn picker_action_row(count: usize, controller: &Entity<Controller>, cx: &App) ->
     };
     let picked_label = count.to_string();
     let ctrl = controller.clone();
-    row_frame(cx)
-        .id("picker-action-row")
-        .role(Role::MenuItem)
-        .aria_label(aria_label)
-        .text_color(color)
-        .cursor_pointer()
-        .hover(|style| style.bg(colors.hover))
-        .on_click(move |_, _w, cx| {
-            ctrl.update(cx, |c, cx| {
-                if picking {
-                    c.dispatch(Cmd::BeginPick, cx);
-                } else {
-                    c.dispatch(Cmd::AddPicked, cx);
-                }
-                c.dispatch(Cmd::SetPickerOpen(false), cx);
-            });
-        })
-        .child(Icon::new(icon).size(IconSize::Sm).color(color))
-        .child(div().flex_1().min_w_0().child(label))
-        .child(Kbd::new(if picking { "tab" } else { &picked_label }))
-        .into_any_element()
+    RowShell::new(
+        "picker-action-row",
+        Icon::new(icon)
+            .size(IconSize::Sm)
+            .color(color)
+            .into_any_element(),
+        label,
+        color,
+    )
+    .trailing(Kbd::new(if picking { "tab" } else { &picked_label }).into_any_element())
+    .build(cx)
+    .role(Role::MenuItem)
+    .aria_label(aria_label)
+    .cursor_pointer()
+    .hover(|style| style.bg(colors.hover))
+    .on_click(move |_, _w, cx| {
+        ctrl.update(cx, |c, cx| {
+            if picking {
+                c.dispatch(Cmd::BeginPick, cx);
+            } else {
+                c.dispatch(Cmd::AddPicked, cx);
+            }
+            c.dispatch(Cmd::SetPickerOpen(false), cx);
+        });
+    })
+    .into_any_element()
 }
 
 fn picker_row(
@@ -563,21 +535,43 @@ fn picker_row(
     let theme = cx.theme();
     let colors = &theme.colors;
     let icon_px = theme.icon_size(IconSize::Sm).to_pixels(theme.base_rem());
-    let text_xs = theme.text_size(TextSize::Xs);
     let blocked = row.reason.is_some();
-    let mut el = row_frame(cx)
-        .id(("picker-row", ix))
+    let title_color = if blocked { colors.fg_subtle } else { colors.fg };
+    let lead = match &row.icon {
+        Some(image) => Image::new(("picker-icon", ix), image.clone())
+            .flex_none()
+            .w(icon_px)
+            .h(icon_px)
+            .into_any_element(),
+        None => Icon::new(IconName::AppWindow)
+            .size(IconSize::Sm)
+            .color(colors.fg_subtle)
+            .into_any_element(),
+    };
+    let detail = row.reason.clone().unwrap_or_else(|| row.exe.clone());
+    let mut shell = RowShell::new(("picker-row", ix), lead, row.title.clone(), title_color)
+        .detail(detail, colors.fg_subtle);
+    if picked {
+        shell = shell.trailing(
+            Icon::new(IconName::Check)
+                .size(IconSize::Sm)
+                .color(colors.accent)
+                .into_any_element(),
+        );
+    }
+    let mut el = shell
+        .build(cx)
         .role(Role::MenuItem)
-        .aria_label(row.title.clone())
-        .text_color(if blocked { colors.fg_subtle } else { colors.fg })
-        .when(blocked, |el| el.opacity(0.5));
-    if !blocked {
+        .aria_label(row.title.clone());
+    if blocked {
+        el = el.opacity(0.5);
+    } else {
         el = el.cursor_pointer().hover(|style| style.bg(colors.hover));
         if picked || highlighted {
             el = el.bg(colors.hover);
         }
     }
-    el = el.on_click({
+    el.on_click({
         let ctrl = controller.clone();
         let hwnd = row.hwnd;
         move |_, _w, cx| {
@@ -586,83 +580,55 @@ fn picker_row(
             }
             ctrl.update(cx, |c, cx| c.dispatch(Cmd::TogglePickerPick { hwnd }, cx));
         }
-    });
-    el = match &row.icon {
-        Some(image) => el.child(
-            Image::new(("picker-icon", ix), image.clone())
-                .flex_none()
-                .w(icon_px)
-                .h(icon_px),
-        ),
-        None => el.child(
-            Icon::new(IconName::AppWindow)
-                .size(IconSize::Sm)
-                .color(colors.fg_subtle),
-        ),
-    };
-    let detail = row.reason.clone().unwrap_or_else(|| row.exe.clone());
-    el = el.child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .child(
-                div()
-                    .text_color(if blocked { colors.fg_subtle } else { colors.fg })
-                    .child(Ellipsis::new(row.title.clone())),
-            )
-            .child(
-                div()
-                    .text_size(text_xs)
-                    .text_color(colors.fg_subtle)
-                    .child(Ellipsis::new(detail)),
-            ),
-    );
-    if picked {
-        el = el.child(
-            Icon::new(IconName::Check)
-                .size(IconSize::Sm)
-                .color(colors.accent),
-        );
-    }
-    el.into_any_element()
+    })
+    .into_any_element()
 }
 
-fn saved_save_row(save_enabled: bool, controller: &Entity<Controller>, cx: &App) -> AnyElement {
+fn saved_save_row(
+    save_enabled: bool,
+    highlighted: bool,
+    controller: &Entity<Controller>,
+    cx: &App,
+) -> AnyElement {
     let colors = &cx.theme().colors;
-    row_frame(cx)
-        .id("saved-save-row")
-        .role(Role::MenuItem)
-        .aria_label("Save current tabs")
-        .text_color(if save_enabled {
+    let ctrl = controller.clone();
+    RowShell::new(
+        "saved-save-row",
+        Icon::new(IconName::Save)
+            .size(IconSize::Sm)
+            .color(colors.fg_subtle)
+            .into_any_element(),
+        "Save current tabs\u{2026}",
+        if save_enabled {
             colors.fg
         } else {
             colors.fg_subtle
-        })
-        .when(save_enabled, |el| {
-            el.cursor_pointer()
-                .hover(|style| style.bg(colors.hover))
-                .on_click({
-                    let ctrl = controller.clone();
-                    move |_, _w, cx| {
-                        ctrl.update(cx, |c, cx| c.dispatch(Cmd::BeginSaveSet, cx));
-                    }
-                })
-        })
-        .when(!save_enabled, |el| el.opacity(0.5))
-        .child(
-            Icon::new(IconName::Save)
-                .size(IconSize::Sm)
-                .color(colors.fg_subtle),
-        )
-        .child(div().flex_1().min_w_0().child("Save current tabs\u{2026}"))
-        .into_any_element()
+        },
+    )
+    .build(cx)
+    .role(Role::MenuItem)
+    .aria_label("Save current tabs")
+    .when(save_enabled, |el| {
+        el.cursor_pointer()
+            .hover(|style| style.bg(colors.hover))
+            .on_click(move |_, _w, cx| {
+                ctrl.update(cx, |c, cx| c.dispatch(Cmd::BeginSaveSet, cx));
+            })
+    })
+    .when(save_enabled && highlighted, |el| el.bg(colors.hover))
+    .when(!save_enabled, |el| el.opacity(0.5))
+    .into_any_element()
 }
 
-fn saved_set_row(set: &SavedSetInfo, controller: &Entity<Controller>, cx: &App) -> AnyElement {
+fn saved_set_row(
+    set: &SavedSetInfo,
+    highlighted: bool,
+    controller: &Entity<Controller>,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
     let rad_sm = theme.radius(Radius::Sm);
-    let (text_sm, text_xs) = (theme.text_size(TextSize::Sm), theme.text_size(TextSize::Xs));
     let id = set.id;
     let restore = {
         let ctrl = controller.clone();
@@ -690,6 +656,30 @@ fn saved_set_row(set: &SavedSetInfo, controller: &Entity<Controller>, cx: &App) 
     } else {
         colors.fg_muted
     };
+    let title_color = if set.available == 0 {
+        colors.fg_muted
+    } else {
+        colors.fg
+    };
+    let restore_row = RowShell::new(
+        ("saved-restore", id),
+        Icon::new(IconName::FolderOpen)
+            .size(IconSize::Sm)
+            .color(colors.fg_subtle)
+            .into_any_element(),
+        set.name.clone(),
+        title_color,
+    )
+    .detail(
+        format!("{} windows - {} available", set.total, set.available),
+        detail_color,
+    )
+    .build(cx)
+    .role(Role::MenuItem)
+    .aria_label(set.name.clone())
+    .when(highlighted, |el| el.bg(colors.hover))
+    .cursor_pointer()
+    .on_click(restore);
     div()
         .id(("saved-row", id))
         .flex()
@@ -698,47 +688,7 @@ fn saved_set_row(set: &SavedSetInfo, controller: &Entity<Controller>, cx: &App) 
         .w_full()
         .rounded(rad_sm)
         .hover(|style| style.bg(colors.hover))
-        .child(
-            div()
-                .id(("saved-restore", id))
-                .role(Role::MenuItem)
-                .aria_label(set.name.clone())
-                .flex()
-                .items_center()
-                .gap_2()
-                .flex_1()
-                .min_w_0()
-                .px_2()
-                .py_1()
-                .cursor_pointer()
-                .on_click(restore)
-                .child(
-                    Icon::new(IconName::FolderOpen)
-                        .size(IconSize::Sm)
-                        .color(colors.fg_subtle),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(text_sm)
-                        .text_color(if set.available == 0 {
-                            colors.fg_muted
-                        } else {
-                            colors.fg
-                        })
-                        .child(Ellipsis::new(set.name.clone()))
-                        .child(
-                            div()
-                                .text_size(text_xs)
-                                .text_color(detail_color)
-                                .child(format!(
-                                    "{} windows - {} available",
-                                    set.total, set.available
-                                )),
-                        ),
-                ),
-        )
+        .child(restore_row)
         .child(
             div()
                 .flex_none()
@@ -763,9 +713,9 @@ fn saved_set_row(set: &SavedSetInfo, controller: &Entity<Controller>, cx: &App) 
         .into_any_element()
 }
 
-fn menu_divider(id: &'static str, cx: &App) -> AnyElement {
+fn menu_divider(index: usize, cx: &App) -> AnyElement {
     div()
-        .id(id)
+        .id(("ctx-divider", index))
         .my_1()
         .h(px(DIVIDER_H))
         .w_full()
@@ -773,110 +723,57 @@ fn menu_divider(id: &'static str, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-struct MenuItem {
-    id: &'static str,
-    label: &'static str,
-    desc: Option<&'static str>,
-    icon: IconName,
-    danger: bool,
-    enabled: bool,
-    run: Action,
-}
-
-impl MenuItem {
-    fn new(
-        id: &'static str,
-        label: &'static str,
-        icon: IconName,
-        enabled: bool,
-        run: Action,
-    ) -> Self {
-        Self {
-            id,
-            label,
-            desc: None,
-            icon,
-            danger: false,
-            enabled,
-            run,
-        }
-    }
-
-    fn desc(mut self, desc: &'static str) -> Self {
-        self.desc = Some(desc);
-        self
-    }
-
-    fn danger(mut self) -> Self {
-        self.danger = true;
-        self
-    }
-}
-
-fn menu_item(item: MenuItem, cx: &App) -> AnyElement {
-    let MenuItem {
-        id,
-        label,
-        desc,
-        icon,
-        danger,
-        enabled,
-        run,
-    } = item;
+/// One row of the tab context menu, built from the controller's list so the key cursor and the
+/// painted rows stay in step.
+fn ctx_menu_row(
+    item: &ContextMenuItem,
+    highlighted: bool,
+    controller: &Entity<Controller>,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
-    let rad_sm = theme.radius(Radius::Sm);
-    let (text_sm, text_xs) = (theme.text_size(TextSize::Sm), theme.text_size(TextSize::Xs));
     let row_h = theme.control_height(ControlSize::Md);
-    let text_color = if danger {
-        colors.danger
+    let (title_color, icon_color) = if item.danger {
+        (colors.danger, colors.danger)
     } else {
-        colors.fg_muted
+        (colors.fg_muted, colors.fg_subtle)
     };
-    let icon_color = if danger {
-        colors.danger
-    } else {
-        colors.fg_subtle
-    };
-    div()
-        .id(id)
+    let mut shell = RowShell::new(
+        item.id,
+        Icon::new(item.icon)
+            .size(IconSize::Sm)
+            .color(icon_color)
+            .into_any_element(),
+        item.label,
+        title_color,
+    )
+    .min_height(row_h);
+    if let Some(desc) = item.desc {
+        shell = shell.detail(desc, colors.fg_subtle);
+    }
+    let enabled = item.enabled;
+    let cmd = item.cmd.clone();
+    let ctrl = controller.clone();
+    shell
+        .build(cx)
         .role(Role::MenuItem)
-        .aria_label(label)
-        .flex()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px_2()
-        .min_h(row_h)
-        .when(desc.is_some(), |el| el.py_1())
-        .rounded(rad_sm)
-        .text_size(text_sm)
-        .text_color(text_color)
+        .aria_label(item.label)
+        .when(item.desc.is_some(), |el| el.py_1())
         .when(!enabled, |el| el.opacity(0.4))
         .when(enabled, |el| {
             el.cursor_pointer().hover(|style| style.bg(colors.hover))
         })
-        .on_click(move |_, window, cx| {
-            if enabled {
-                run(window, cx);
+        .when(enabled && highlighted, |el| el.bg(colors.hover))
+        .on_click(move |_, _w, cx| {
+            if !enabled {
+                return;
             }
+            ctrl.update(cx, |c, cx| {
+                c.dispatch(cmd.clone(), cx);
+                c.dispatch(Cmd::CloseTabMenu, cx);
+            });
         })
-        .child(Icon::new(icon).size(IconSize::Sm).color(icon_color))
-        .child(
-            div()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .child(label)
-                .when_some(desc, |el, text| {
-                    el.child(
-                        div()
-                            .text_size(text_xs)
-                            .text_color(colors.fg_subtle)
-                            .child(text),
-                    )
-                }),
-        )
         .into_any_element()
 }
 
@@ -947,21 +844,6 @@ fn accent_row(
         .child(none_seg)
         .children(swatches)
         .into_any_element()
-}
-
-fn close_menu_action(
-    controller: &Entity<Controller>,
-    group: GroupId,
-    tab: TabId,
-    make: impl Fn(GroupId, TabId) -> Cmd + 'static,
-) -> Action {
-    let ctrl = controller.clone();
-    Rc::new(move |_w: &mut Window, cx: &mut App| {
-        ctrl.update(cx, |c, cx| {
-            c.dispatch(make(group, tab), cx);
-            c.dispatch(Cmd::CloseTabMenu, cx);
-        });
-    }) as Action
 }
 
 #[cfg(test)]

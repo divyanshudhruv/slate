@@ -7,8 +7,8 @@ use ely_gpui_component::theme::ActiveTheme;
 use ely_gpui_component::typography::{Caption, Kbd};
 use gpui::prelude::*;
 use gpui::{
-    div, App, Context, ElementId, Entity, IntoElement, MouseButton, ParentElement, Render,
-    RenderImage, ScrollHandle, Size, Styled, Subscription, Window,
+    div, App, Context, ElementId, Entity, FocusHandle, IntoElement, MouseButton, ParentElement,
+    Render, RenderImage, ScrollHandle, Size, Styled, Subscription, Window,
 };
 
 use crate::controller::{
@@ -87,6 +87,9 @@ pub struct HostWindow {
     saved_field: Option<Entity<TextInput>>,
     saved_primed: Option<SavedPrompt>,
     tab_scroll: ScrollHandle,
+    /// Held by the content root. A mouse press parks focus here, so key events reach the menus
+    /// even when the click landed on a plain row or tab that cannot take focus itself.
+    focus: FocusHandle,
     _observe_controller: Subscription,
 }
 
@@ -113,6 +116,7 @@ impl HostWindow {
             saved_field: None,
             saved_primed: None,
             tab_scroll: ScrollHandle::new(),
+            focus: cx.focus_handle(),
             _observe_controller,
         }
     }
@@ -227,6 +231,7 @@ fn update_banner(update: &UpdateState, hidden: Option<&str>) -> Option<UpdateBan
 fn build_tab_bar(
     controller: &Entity<Controller>,
     info: &HostInfo,
+    focus: &FocusHandle,
     cx: &Context<HostWindow>,
 ) -> SlateTabBar {
     let group = info.group;
@@ -294,8 +299,10 @@ fn build_tab_bar(
     });
     tab_bar = tab_bar.on_context({
         let ctrl = controller.clone();
-        move |id, position, _w, cx| {
+        let focus = focus.clone();
+        move |id, position, window, cx| {
             if let (Some(_g), Ok(n)) = (group, id.to_string().parse::<u64>()) {
+                window.focus(&focus, cx);
                 ctrl.update(cx, |c, cx| {
                     c.dispatch(
                         Cmd::OpenTabMenu {
@@ -384,7 +391,7 @@ impl Render for HostWindow {
         let group = info.group;
 
         let palette = cx.theme().palette();
-        let tab_bar = build_tab_bar(&controller, &info, cx);
+        let tab_bar = build_tab_bar(&controller, &info, &self.focus, cx);
 
         let viewport = window.viewport_size();
 
@@ -403,8 +410,10 @@ impl Render for HostWindow {
 
         let dismiss = {
             let ctrl = controller.clone();
+            let focus = self.focus.clone();
             let open = Surfaces::of(&info);
-            move |_ev: &gpui::MouseDownEvent, _w: &mut Window, cx: &mut App| {
+            move |_ev: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App| {
+                window.focus(&focus, cx);
                 if !open.dismissable() {
                     return;
                 }
@@ -451,6 +460,24 @@ impl Render for HostWindow {
                         "up" => c.dispatch(Cmd::MoveTabMenuCursor { delta: -1 }, cx),
                         "down" => c.dispatch(Cmd::MoveTabMenuCursor { delta: 1 }, cx),
                         _ => c.dispatch(Cmd::ConfirmTabMenuCursor, cx),
+                    });
+                    return;
+                }
+                if open.ctx_menu && matches!(key, "up" | "down" | "enter") {
+                    cx.stop_propagation();
+                    ctrl.update(cx, |c, cx| match key {
+                        "up" => c.dispatch(Cmd::MoveContextMenuCursor { delta: -1 }, cx),
+                        "down" => c.dispatch(Cmd::MoveContextMenuCursor { delta: 1 }, cx),
+                        _ => c.dispatch(Cmd::ConfirmContextMenuCursor, cx),
+                    });
+                    return;
+                }
+                if open.saved && matches!(key, "up" | "down" | "enter") {
+                    cx.stop_propagation();
+                    ctrl.update(cx, |c, cx| match key {
+                        "up" => c.dispatch(Cmd::MoveSavedMenuCursor { delta: -1 }, cx),
+                        "down" => c.dispatch(Cmd::MoveSavedMenuCursor { delta: 1 }, cx),
+                        _ => c.dispatch(Cmd::ConfirmSavedMenuCursor, cx),
                     });
                     return;
                 }
@@ -515,6 +542,7 @@ impl Render for HostWindow {
             .flex()
             .flex_col()
             .bg(bg)
+            .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, dismiss)
             .capture_key_down(escape)
             .on_drop::<TabDrag>(detach_out)

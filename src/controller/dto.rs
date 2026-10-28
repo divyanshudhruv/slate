@@ -1,4 +1,4 @@
-use ely_gpui_component::primitives::Severity;
+use ely_gpui_component::primitives::{IconName, Severity};
 use gpui::{RenderImage, SharedString};
 use std::sync::Arc;
 
@@ -62,6 +62,13 @@ pub enum Cmd {
         at: (f32, f32),
     },
     CloseTabMenu,
+    MoveContextMenuCursor {
+        delta: isize,
+    },
+    ConfirmContextMenuCursor,
+    CopyTabPath {
+        tab: TabId,
+    },
     BeginRename {
         group: GroupId,
         tab: TabId,
@@ -84,6 +91,10 @@ pub enum Cmd {
     AddPicked,
     SetSavedMenu(bool),
     ToggleSavedMenu,
+    MoveSavedMenuCursor {
+        delta: isize,
+    },
+    ConfirmSavedMenuCursor,
     BeginSaveSet,
     BeginRenameSet {
         id: u64,
@@ -149,7 +160,6 @@ pub struct TabInfo {
     pub title: String,
     pub app: String,
     pub exe: String,
-    pub exe_path: String,
     pub icon: Option<Arc<RenderImage>>,
     pub accent: Option<usize>,
 }
@@ -200,6 +210,10 @@ pub struct HostInfo {
     pub saved_sets: Vec<SavedSetInfo>,
     pub saved_prompt: Option<SavedPrompt>,
     pub tab_menu: Option<TabMenu>,
+    /// Rows of the tab context menu, in render order; the cursor indexes this list.
+    pub ctx_menu_items: Vec<ContextMenuItem>,
+    pub ctx_menu_cursor: Option<usize>,
+    pub saved_menu_cursor: Option<usize>,
     pub renaming: Option<(GroupId, TabId)>,
     pub picking: bool,
     pub hover_preview: Option<HoverPreview>,
@@ -236,6 +250,21 @@ impl HostInfo {
 pub struct TabMenu {
     pub tab: TabId,
     pub at: (f32, f32),
+}
+
+/// One row of a tab's context menu, built by the controller so the keyboard cursor and the
+/// painted rows can never drift apart.
+#[derive(Clone)]
+pub struct ContextMenuItem {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub desc: Option<&'static str>,
+    pub icon: IconName,
+    pub enabled: bool,
+    pub danger: bool,
+    /// Draw a divider above this row.
+    pub starts_group: bool,
+    pub cmd: Cmd,
 }
 
 #[derive(Clone)]

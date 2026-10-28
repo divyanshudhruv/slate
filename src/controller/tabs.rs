@@ -1,6 +1,7 @@
+use ely_gpui_component::primitives::IconName;
 use ely_gpui_component::theme::HUE_NAMES;
 
-use super::Controller;
+use super::{Cmd, ContextMenuItem, Controller};
 use crate::core::{GroupId, TabId};
 use crate::win::{
     activate_window, close_window, is_blacklisted, move_window, register_member, slate_elevated,
@@ -92,6 +93,139 @@ impl Controller {
         self.select_tab(group, tab);
         self.menus.tab_menu_open = false;
         self.menus.tab_menu_cursor = None;
+    }
+
+    /// The context menu's rows, in the order they paint. The key cursor indexes this list.
+    pub(super) fn ctx_menu_items(&self) -> Vec<ContextMenuItem> {
+        let Some(tab) = self.menus.tab_menu.as_ref().map(|menu| menu.tab) else {
+            return Vec::new();
+        };
+        let Some(group) = self.active_group else {
+            return Vec::new();
+        };
+        let tabs = self.groups.group(group);
+        let ix = tabs.and_then(|group| group.tabs.iter().position(|t| t.id == tab));
+        let count = tabs.map(|group| group.tabs.len()).unwrap_or(0);
+        let can_left = ix.is_some_and(|ix| ix > 0);
+        let can_right = ix.is_some_and(|ix| ix + 1 < count);
+        let has_path = ix
+            .and_then(|ix| tabs.and_then(|group| group.tabs.get(ix)))
+            .is_some_and(|t| !t.window.exe_path.is_empty());
+        vec![
+            ContextMenuItem {
+                id: "ctx-rename",
+                label: "Rename\u{2026}",
+                desc: None,
+                icon: IconName::Pencil,
+                enabled: true,
+                danger: false,
+                starts_group: true,
+                cmd: Cmd::BeginRename { group, tab },
+            },
+            ContextMenuItem {
+                id: "ctx-copy-path",
+                label: "Copy exe path",
+                desc: None,
+                icon: IconName::Copy,
+                enabled: has_path,
+                danger: false,
+                starts_group: false,
+                cmd: Cmd::CopyTabPath { tab },
+            },
+            ContextMenuItem {
+                id: "ctx-others",
+                label: "Close others",
+                desc: None,
+                icon: IconName::AppWindow,
+                enabled: count > 1,
+                danger: false,
+                starts_group: true,
+                cmd: Cmd::CloseOtherTabs { group, tab },
+            },
+            ContextMenuItem {
+                id: "ctx-left",
+                label: "Ungroup to the left",
+                desc: None,
+                icon: IconName::ChevronLeft,
+                enabled: can_left,
+                danger: false,
+                starts_group: false,
+                cmd: Cmd::CloseTabsToLeft { group, tab },
+            },
+            ContextMenuItem {
+                id: "ctx-right",
+                label: "Ungroup to the right",
+                desc: None,
+                icon: IconName::ChevronRight,
+                enabled: can_right,
+                danger: false,
+                starts_group: false,
+                cmd: Cmd::CloseTabsToRight { group, tab },
+            },
+            ContextMenuItem {
+                id: "ctx-ungroup",
+                label: "Ungroup",
+                desc: Some("Un-host the window and keep it open"),
+                icon: IconName::ExternalLink,
+                enabled: true,
+                danger: false,
+                starts_group: true,
+                cmd: Cmd::Ungroup { group, tab },
+            },
+            ContextMenuItem {
+                id: "ctx-close",
+                label: "Close",
+                desc: Some("Close the window and end its app"),
+                icon: IconName::X,
+                enabled: true,
+                danger: true,
+                starts_group: false,
+                cmd: Cmd::CloseTab { group, tab },
+            },
+        ]
+    }
+
+    /// Walks the context menu's key cursor over the rows that can run, wrapping at both ends.
+    pub(super) fn move_ctx_menu_cursor(&mut self, delta: isize) {
+        let enabled: Vec<usize> = self
+            .ctx_menu_items()
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.enabled)
+            .map(|(ix, _)| ix)
+            .collect();
+        self.menus.ctx_menu_cursor =
+            crate::core::step_cursor(self.menus.ctx_menu_cursor, &enabled, delta);
+    }
+
+    /// Runs the row the context menu cursor sits on, then closes the menu.
+    pub(super) fn confirm_ctx_menu_cursor(&mut self, cx: &mut gpui::Context<Self>) {
+        let items = self.ctx_menu_items();
+        let Some(item) = self.menus.ctx_menu_cursor.and_then(|ix| items.get(ix)) else {
+            return;
+        };
+        if !item.enabled {
+            return;
+        }
+        let cmd = item.cmd.clone();
+        self.menus.tab_menu = None;
+        self.menus.ctx_menu_cursor = None;
+        self.dispatch(cmd, cx);
+    }
+
+    /// Puts a tab's executable path on the clipboard, for the context menu row.
+    pub(super) fn copy_tab_path(&mut self, tab: TabId, cx: &mut gpui::Context<Self>) {
+        let path = self
+            .active_group
+            .and_then(|group| self.groups.group(group))
+            .and_then(|group| group.tabs.iter().find(|t| t.id == tab))
+            .map(|t| t.window.exe_path.clone())
+            .filter(|path| !path.is_empty());
+        let Some(path) = path else {
+            return;
+        };
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(path));
+        self.note_success("Exe path copied", cx);
     }
 
     pub(super) fn select_tab(&mut self, group: GroupId, tab: TabId) {
