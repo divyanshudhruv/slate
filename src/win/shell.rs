@@ -40,8 +40,8 @@ pub fn info_message(title: &str, body: &str) {
     unsafe {
         let _ = MessageBoxW(
             None,
-            PCWSTR(title.as_ptr()),
             PCWSTR(body.as_ptr()),
+            PCWSTR(title.as_ptr()),
             MB_OK | MB_ICONINFORMATION,
         );
     }

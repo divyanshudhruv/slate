@@ -180,14 +180,12 @@ pub fn unregister_member(member: isize, st: &StylingState) -> bool {
 
 /// Asks the shell to rebuild the taskbar button that ownership and style writes left stale.
 fn refresh_taskbar_button(mh: HWND) {
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
-    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Shell::ITaskbarList;
     const CLSID_TASKBAR_LIST: windows::core::GUID =
         windows::core::GUID::from_u128(0x56fdf344_fd6d_11d0_958a_006097c9a090);
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let _com = crate::win::ComApartment::init();
         let Ok(list) =
             CoCreateInstance::<_, ITaskbarList>(&CLSID_TASKBAR_LIST, None, CLSCTX_INPROC_SERVER)
         else {

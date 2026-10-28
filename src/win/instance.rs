@@ -1,9 +1,8 @@
 //! One Slate per data folder: portable and installed builds share settings, so a named mutex and a pid file keep one copy in charge.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
+use sha2::{Digest, Sha256};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
 use windows::Win32::System::Threading::CreateMutexW;
@@ -15,11 +14,14 @@ fn pid_path() -> PathBuf {
 }
 
 /// A stable name for this data folder; the prefix keeps it inside the user's session namespace.
+/// Hashed with sha2 rather than `DefaultHasher`, which may change between Rust releases.
 fn mutex_name() -> Vec<u16> {
     let dir = crate::config::paths::data_dir();
-    let mut hasher = DefaultHasher::new();
-    dir.to_string_lossy().to_lowercase().hash(&mut hasher);
-    let name = format!("Local\\Slate-{:016x}", hasher.finish());
+    let digest = Sha256::digest(dir.to_string_lossy().to_lowercase().as_bytes());
+    let name = format!(
+        "Local\\Slate-{:016x}",
+        u64::from_be_bytes(digest[..8].try_into().unwrap_or_default())
+    );
     name.encode_utf16().chain(std::iter::once(0)).collect()
 }
 

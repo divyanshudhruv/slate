@@ -3,9 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use windows::core::{Interface, HSTRING};
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, IPersistFile, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
-};
+use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER};
 use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
 /// Writes or refreshes the Start menu shortcut to the installed copy so search keeps finding it.
@@ -21,7 +19,7 @@ pub fn ensure_start_menu_shortcut(exe: &Path) -> Result<(), String> {
     let link_file = HSTRING::from(link_path.to_string_lossy().as_ref());
 
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let _com = crate::win::ComApartment::init();
         let link: IShellLinkW =
             CoCreateInstance::<_, IShellLinkW>(&ShellLink, None, CLSCTX_INPROC_SERVER)
                 .map_err(|err| err.to_string())?;

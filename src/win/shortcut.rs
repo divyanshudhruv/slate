@@ -87,6 +87,9 @@ pub fn set_bindings(entries: &[(Shortcut, Chord)]) {
     BINDING_COUNT.store(count, Ordering::Release);
 }
 
+/// How many yields an update gives a hook reader before it skips the write.
+const SPIN_LIMIT: usize = 10_000;
+
 /// Window set read by the hook while the UI thread updates it, without truncation.
 struct OwnedSet {
     seq: AtomicUsize,
@@ -108,13 +111,20 @@ impl OwnedSet {
     fn set(&self, hwnds: impl IntoIterator<Item = isize>) {
         let next: Vec<isize> = hwnds.into_iter().collect();
         self.seq.fetch_add(1, Ordering::AcqRel);
-        while self.readers.load(Ordering::Acquire) != 0 {
+        // Bounded, so a delayed hook reader cannot stall the frame.
+        for _ in 0..SPIN_LIMIT {
+            if self.readers.load(Ordering::Acquire) == 0 {
+                unsafe {
+                    *self.items.get() = next;
+                }
+                self.seq.fetch_add(1, Ordering::Release);
+                return;
+            }
             std::thread::yield_now();
         }
-        unsafe {
-            *self.items.get() = next;
-        }
+        // Never write while a reader is inside the table; skip this update instead.
         self.seq.fetch_add(1, Ordering::Release);
+        tracing::warn!("owned-window update skipped: a hook reader held the table");
     }
 
     fn contains(&self, hwnd: isize) -> bool {

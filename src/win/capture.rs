@@ -128,8 +128,10 @@ unsafe fn grab_once(hwnd: isize) -> Option<WindowSnapshot> {
     // PrintWindow sends messages to the target thread, so a hung app would freeze the UI thread.
     let mut bgra = if IsHungAppWindow(h).as_bool() {
         None
+    } else if print_window(h, pooled.mem.0, w, hgt, tw, th) {
+        read_deselected(pooled.mem.0, pooled.bmp.0, old, tw, th).filter(|px| !is_flat(px))
     } else {
-        print_window(h, pooled.mem.0, pooled.bmp.0, w, hgt, tw, th)
+        None
     };
     // Screen pixels are only trusted for the window the user is looking at.
     if bgra.is_none() && GetForegroundWindow() == h {
@@ -151,7 +153,8 @@ unsafe fn grab_once(hwnd: isize) -> Option<WindowSnapshot> {
             )
             .as_bool();
             if drawn {
-                bgra = read_pixels(pooled.mem.0, pooled.bmp.0, tw, th).filter(|px| !is_flat(px));
+                bgra = read_deselected(pooled.mem.0, pooled.bmp.0, old, tw, th)
+                    .filter(|px| !is_flat(px));
             }
         }
     }
@@ -166,23 +169,29 @@ unsafe fn grab_once(hwnd: isize) -> Option<WindowSnapshot> {
     })
 }
 
-/// Draws the window itself into `mem` when the screen grab returns nothing usable.
-unsafe fn print_window(
-    hwnd: HWND,
+/// Reads the bitmap with it out of the DC first; `GetDIBits` refuses a selected bitmap.
+unsafe fn read_deselected(
     mem: HDC,
-    mem_bmp: HBITMAP,
-    w: i32,
-    hgt: i32,
-    tw: i32,
-    th: i32,
+    bmp: HBITMAP,
+    old: HGDIOBJ,
+    width: i32,
+    height: i32,
 ) -> Option<Vec<u8>> {
+    SelectObject(mem, old);
+    let pixels = read_pixels(mem, bmp, width, height);
+    SelectObject(mem, HGDIOBJ(bmp.0));
+    pixels
+}
+
+/// Draws the window itself into `mem` when the screen grab returns nothing usable.
+unsafe fn print_window(hwnd: HWND, mem: HDC, w: i32, hgt: i32, tw: i32, th: i32) -> bool {
     let src = MemDc(CreateCompatibleDC(Some(mem)));
     if src.0.is_invalid() {
-        return None;
+        return false;
     }
     let bmp = Bitmap(CreateCompatibleBitmap(mem, w, hgt));
     if bmp.0.is_invalid() {
-        return None;
+        return false;
     }
     let old = SelectObject(src.0, HGDIOBJ(bmp.0 .0));
     let printed = PrintWindow(hwnd, src.0, PW_CLIENTONLY | PW_RENDERFULLCONTENT) != 0;
@@ -191,9 +200,6 @@ unsafe fn print_window(
         printed && StretchBlt(mem, 0, 0, tw, th, Some(src.0), 0, 0, w, hgt, SRCCOPY).as_bool();
     SelectObject(src.0, old);
     drawn
-        .then(|| read_pixels(mem, mem_bmp, tw, th))
-        .flatten()
-        .filter(|pixels| !is_flat(pixels))
 }
 
 /// A frame of one repeated pixel means the grab caught nothing usable.

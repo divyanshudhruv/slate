@@ -153,7 +153,7 @@ impl HostWorker {
     }
 
     pub fn install_move_tracker(&self, host: isize) {
-        if host == 0 || TRACKER_ORIG.with(|o| o.get()) != 0 {
+        if host == 0 || TRACKER_HOST.with(Cell::get) == host {
             return;
         }
         let hwnd = HWND(host as *mut _);
@@ -165,7 +165,9 @@ impl HostWorker {
             if !set_long_ptr(hwnd, GWLP_WNDPROC, host_proc as *const () as isize) {
                 return;
             }
+            // A recreated host is subclassed on its own; the previous window keeps its old proc.
             TRACKER_ORIG.with(|o| o.set(orig));
+            TRACKER_HOST.with(|h| h.set(host));
             TRACKER.with(|t| *t.borrow_mut() = Some(self.inner.shared.clone()));
         }
     }
@@ -174,6 +176,7 @@ impl HostWorker {
 thread_local! {
     static TRACKER: RefCell<Option<Arc<Mutex<HostShared>>>> = const { RefCell::new(None) };
     static TRACKER_ORIG: Cell<isize> = const { Cell::new(0) };
+    static TRACKER_HOST: Cell<isize> = const { Cell::new(0) };
 }
 
 unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
