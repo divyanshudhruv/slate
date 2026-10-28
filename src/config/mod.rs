@@ -8,5 +8,6 @@ pub use install::{canonical_exe_path, load_install, save_install, staging_update
 pub use load::{ensure, load, load_session, load_sets};
 pub use save::{save, save_session, save_sets};
 pub use schema::{
-    InstallRecord, Keybinds, SavedSet, SavedSets, SavedTab, Session, Settings, SCHEMA_VERSION,
+    InstallRecord, Keybinds, SavedSet, SavedSets, SavedTab, Session, Settings, ThemeMode,
+    SCHEMA_VERSION,
 };

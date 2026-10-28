@@ -4,40 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 
 use super::paths;
-use super::schema::{Accent, SavedSet, SavedSets, Session, Settings, ThemeMode, SCHEMA_VERSION};
-
-#[derive(Debug, Default)]
-struct PartialSettings {
-    theme: Option<ThemeMode>,
-    accent: Option<Accent>,
-    restore_session: Option<bool>,
-    preview_delay_ms: Option<u64>,
-    tabs: Option<PartialTabs>,
-    updates: Option<PartialUpdates>,
-    keybinds: Option<PartialKeybinds>,
-}
-
-#[derive(Debug, Default)]
-struct PartialTabs {
-    icons: Option<bool>,
-    count_badge: Option<bool>,
-    hover_preview: Option<bool>,
-    show_bar: Option<bool>,
-}
-
-#[derive(Debug, Default)]
-struct PartialUpdates {
-    latest: Option<String>,
-    checked_at: Option<i64>,
-}
-
-#[derive(Debug, Default)]
-struct PartialKeybinds {
-    next_tab: Option<String>,
-    prev_tab: Option<String>,
-    close_tab: Option<String>,
-    select_tab: Option<String>,
-}
+use super::schema::{SavedSet, SavedSets, Session, Settings, SCHEMA_VERSION};
 
 fn template_dir() -> Option<PathBuf> {
     let beside_exe = std::env::current_exe()
@@ -291,11 +258,76 @@ fn write_new(dest: &Path, bytes: &[u8]) -> bool {
 }
 
 pub fn load() -> Settings {
-    let mut settings = Settings::default();
-    if let Some(partial) = read_partial(&paths::settings_path()) {
-        apply(&mut settings, partial);
-    }
+    let mut settings = read_settings(&paths::settings_path()).unwrap_or_default();
+    settings.preview_delay_ms = settings
+        .preview_delay_ms
+        .min(crate::timings::MAX_PREVIEW_DELAY_MS);
     settings
+}
+
+/// Reads settings through a type check, so one bad field does not drop the rest.
+fn read_settings(path: &Path) -> Option<Settings> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(_) => {
+            backup(path);
+            return None;
+        }
+    };
+    if schema_version_of(&value) > SCHEMA_VERSION as u64 {
+        backup(path);
+        return None;
+    }
+    Some(settings_from_value(migrate(value)))
+}
+
+fn settings_from_value(value: Value) -> Settings {
+    let defaults = serde_json::to_value(Settings::default()).unwrap_or(Value::Null);
+    serde_json::from_value(sanitize(value, &defaults)).unwrap_or_default()
+}
+
+fn schema_version_of(value: &Value) -> u64 {
+    value
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+}
+
+/// Drops fields whose JSON type no longer matches the schema, keeping everything else.
+fn sanitize(value: Value, default: &Value) -> Value {
+    match (value, default) {
+        (Value::Object(mut map), Value::Object(defaults)) => {
+            let keys: Vec<String> = map.keys().cloned().collect();
+            for key in keys {
+                let Some(field_default) = defaults.get(&key) else {
+                    continue;
+                };
+                let Some(field) = map.remove(&key) else {
+                    continue;
+                };
+                let fixed = sanitize(field, field_default);
+                if !fixed.is_null() || field_default.is_null() {
+                    map.insert(key, fixed);
+                }
+            }
+            Value::Object(map)
+        }
+        (value, Value::Null) => value,
+        (value, default) if value_kind(&value) == value_kind(default) => value,
+        (_, _) => Value::Null,
+    }
+}
+
+fn value_kind(value: &Value) -> u8 {
+    match value {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Number(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(_) => 4,
+        Value::Object(_) => 5,
+    }
 }
 
 pub fn load_sets() -> SavedSets {
@@ -365,128 +397,6 @@ fn assign_ids(sets: &mut [SavedSet]) {
     }
 }
 
-fn read_partial(path: &Path) -> Option<PartialSettings> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let value: Value = match serde_json::from_str(&text) {
-        Ok(value) => value,
-        Err(_) => {
-            backup(path);
-            return None;
-        }
-    };
-    if schema_version_of(&value) > SCHEMA_VERSION as u64 {
-        backup(path);
-        return None;
-    }
-    Some(partial_from_value(migrate(value)))
-}
-
-fn schema_version_of(value: &Value) -> u64 {
-    value
-        .get("schema_version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0)
-}
-
-fn partial_from_value(value: Value) -> PartialSettings {
-    let mut partial = PartialSettings {
-        theme: typed_field(&value, "theme"),
-        accent: typed_field(&value, "accent"),
-        restore_session: bool_field(&value, "restore_session"),
-        preview_delay_ms: value.get("preview_delay_ms").and_then(Value::as_u64),
-        ..PartialSettings::default()
-    };
-    if let Some(tabs) = value.get("tabs") {
-        partial.tabs = Some(PartialTabs {
-            icons: bool_field(tabs, "icons"),
-            count_badge: bool_field(tabs, "count_badge"),
-            hover_preview: bool_field(tabs, "hover_preview"),
-            show_bar: bool_field(tabs, "show_bar"),
-        });
-    }
-    if let Some(updates) = value.get("updates") {
-        partial.updates = Some(PartialUpdates {
-            latest: str_field(updates, "latest"),
-            checked_at: i64_field(updates, "checked_at"),
-        });
-    }
-    if let Some(keybinds) = value.get("keybinds") {
-        partial.keybinds = Some(PartialKeybinds {
-            next_tab: str_field(keybinds, "next_tab"),
-            prev_tab: str_field(keybinds, "prev_tab"),
-            close_tab: str_field(keybinds, "close_tab"),
-            select_tab: str_field(keybinds, "select_tab"),
-        });
-    }
-    partial
-}
-
-fn str_field(value: &Value, key: &str) -> Option<String> {
-    value.get(key)?.as_str().map(|s| s.to_string())
-}
-
-fn typed_field<T: serde::de::DeserializeOwned>(value: &Value, key: &str) -> Option<T> {
-    serde_json::from_value(value.get(key)?.clone()).ok()
-}
-
-fn bool_field(value: &Value, key: &str) -> Option<bool> {
-    value.get(key)?.as_bool()
-}
-
-fn i64_field(value: &Value, key: &str) -> Option<i64> {
-    value.get(key)?.as_i64()
-}
-
-fn apply(settings: &mut Settings, partial: PartialSettings) {
-    if let Some(theme) = partial.theme {
-        settings.theme = theme;
-    }
-    if let Some(accent) = partial.accent {
-        settings.accent = accent;
-    }
-    if let Some(restore_session) = partial.restore_session {
-        settings.restore_session = restore_session;
-    }
-    if let Some(delay) = partial.preview_delay_ms {
-        settings.preview_delay_ms = delay.min(crate::timings::MAX_PREVIEW_DELAY_MS);
-    }
-    if let Some(tabs) = partial.tabs {
-        if let Some(icons) = tabs.icons {
-            settings.tabs.icons = icons;
-        }
-        if let Some(count_badge) = tabs.count_badge {
-            settings.tabs.count_badge = count_badge;
-        }
-        if let Some(hover_preview) = tabs.hover_preview {
-            settings.tabs.hover_preview = hover_preview;
-        }
-        if let Some(show_bar) = tabs.show_bar {
-            settings.tabs.show_bar = show_bar;
-        }
-    }
-    if let Some(updates) = partial.updates {
-        if updates.latest.is_some() {
-            settings.updates.latest = updates.latest;
-        }
-        if let Some(checked_at) = updates.checked_at {
-            settings.updates.checked_at = checked_at;
-        }
-    }
-    if let Some(keybinds) = partial.keybinds {
-        if let Some(next_tab) = keybinds.next_tab {
-            settings.keybinds.next_tab = next_tab;
-        }
-        if let Some(prev_tab) = keybinds.prev_tab {
-            settings.keybinds.prev_tab = prev_tab;
-        }
-        if let Some(close_tab) = keybinds.close_tab {
-            settings.keybinds.close_tab = close_tab;
-        }
-        if let Some(select_tab) = keybinds.select_tab {
-            settings.keybinds.select_tab = select_tab;
-        }
-    }
-}
 
 fn migrate(mut value: Value) -> Value {
     if !value.is_object() {
@@ -523,26 +433,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn partial_overrides_only_what_it_sets() {
-        let mut s = Settings::default();
-        apply(
-            &mut s,
-            PartialSettings {
-                theme: Some(ThemeMode::Dark),
-                accent: None,
-                restore_session: None,
-                preview_delay_ms: None,
-                tabs: Some(PartialTabs {
-                    icons: Some(false),
-                    count_badge: None,
-                    hover_preview: None,
-                    show_bar: None,
-                }),
-                updates: None,
-                keybinds: None,
-            },
-        );
-        assert_eq!(s.theme, ThemeMode::Dark);
+    #[test]
+    fn settings_only_override_what_the_file_sets() {
+        let s = settings_from_value(serde_json::json!({
+            "theme": "dark",
+            "tabs": { "icons": false }
+        }));
+        assert_eq!(s.theme, crate::config::ThemeMode::Dark);
         assert_eq!(s.accent.name(), "blue");
         assert!(!s.tabs.icons);
         assert!(s.tabs.count_badge);
@@ -553,8 +450,7 @@ mod tests {
         let value = serde_json::json!({
             "keybinds": { "next_tab": "nonsense", "prev_tab": "ctrl+tab" }
         });
-        let mut s = Settings::default();
-        apply(&mut s, partial_from_value(value));
+        let s = settings_from_value(value);
         assert_eq!(s.keybinds.prev_tab, "ctrl+tab");
         assert_eq!(s.keybinds.close_tab, "ctrl+w");
         let bindings = s.keybinds.bindings();
@@ -566,31 +462,35 @@ mod tests {
     }
 
     #[test]
-    fn settings_partial_reads_theme_and_accent() {
-        let value = serde_json::json!({
+    fn settings_read_theme_and_accent() {
+        let s = settings_from_value(serde_json::json!({
             "theme": "dark",
             "accent": "Rose",
             "tabs": { "icons": false }
-        });
-        let partial = partial_from_value(value);
-        assert_eq!(partial.theme, Some(ThemeMode::Dark));
-        assert_eq!(partial.accent.as_ref().map(Accent::name), Some("Rose"));
-        assert_eq!(partial.tabs.and_then(|t| t.icons), Some(false));
+        }));
+        assert_eq!(s.theme, crate::config::ThemeMode::Dark);
+        assert_eq!(s.accent.name(), "Rose");
+        assert!(!s.tabs.icons);
     }
 
     #[test]
     fn wrong_typed_key_does_not_drop_the_rest() {
-        let value = serde_json::json!({
+        let s = settings_from_value(serde_json::json!({
             "theme": 123,
             "accent": "Rose",
             "tabs": { "icons": "yes", "count_badge": false }
-        });
-        let partial = partial_from_value(value);
-        assert!(partial.theme.is_none());
-        assert_eq!(partial.accent.as_ref().map(Accent::name), Some("Rose"));
-        let tabs = partial.tabs.unwrap();
-        assert_eq!(tabs.icons, None);
-        assert_eq!(tabs.count_badge, Some(false));
+        }));
+        assert_eq!(s.theme, crate::config::ThemeMode::System);
+        assert_eq!(s.accent.name(), "Rose");
+        assert!(s.tabs.icons);
+        assert!(!s.tabs.count_badge);
+    }
+
+    #[test]
+    fn unknown_keys_survive_a_save() {
+        let s = settings_from_value(serde_json::json!({ "future_flag": 7 }));
+        let value = crate::config::save::app_value(&s);
+        assert_eq!(value["future_flag"], 7);
     }
 
     #[test]

@@ -6,20 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{json, Value};
 
 use super::paths;
-use super::schema::{AppSettings, SavedSets, Session, Settings, SCHEMA_VERSION};
+use super::schema::{SavedSets, Session, Settings, SCHEMA_VERSION};
 
 pub(crate) fn app_value(settings: &Settings) -> Value {
-    serde_json::to_value(AppSettings {
-        schema_version: SCHEMA_VERSION,
-        theme: settings.theme,
-        accent: &settings.accent,
-        restore_session: settings.restore_session,
-        preview_delay_ms: settings.preview_delay_ms,
-        tabs: &settings.tabs,
-        updates: &settings.updates,
-        keybinds: &settings.keybinds,
-    })
-    .unwrap_or_else(|_| json!({ "schema_version": SCHEMA_VERSION }))
+    serde_json::to_value(settings).unwrap_or_else(|_| json!({ "schema_version": SCHEMA_VERSION }))
 }
 
 pub fn save(settings: &Settings) -> io::Result<()> {
