@@ -1,12 +1,42 @@
 use ely_gpui_component::feedback::Toast;
 use ely_gpui_component::primitives::Severity;
 use gpui::Context;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use super::dto::{update_toast, Dialog};
 use super::Controller;
 use crate::config;
 use crate::core::update::{self, UpdateState, CHECK_COOLDOWN_SECS};
 use crate::win::process_alive;
+
+/// Runs blocking network work on a plain thread so gpui's executor keeps ticking.
+fn run_off_thread<T: Send + 'static>(
+    cx: &mut Context<Controller>,
+    work: impl FnOnce() -> T + Send + 'static,
+    done: impl FnOnce(&mut Controller, T, &mut Context<Controller>) + 'static,
+) {
+    let slot = Arc::new(Mutex::new(None));
+    let producer = {
+        let slot = slot.clone();
+        std::thread::spawn(move || {
+            let result = work();
+            *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+        })
+    };
+    cx.spawn(async move |this, cx| {
+        while !producer.is_finished() {
+            cx.background_executor()
+                .timer(Duration::from_millis(20))
+                .await;
+        }
+        let result = slot.lock().ok().and_then(|mut slot| slot.take());
+        if let Some(result) = result {
+            let _ = this.update(cx, |controller, cx| done(controller, result, cx));
+        }
+    })
+    .detach();
+}
 
 pub(super) fn startup_install() -> crate::core::install::Plan {
     let current_exe = std::env::current_exe()
@@ -61,16 +91,11 @@ impl Controller {
         self.update = UpdateState::Checking;
         self.invalidate_info();
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async { crate::win::update::fetch_latest() })
-                .await;
-            let _ = this.update(cx, |controller, cx| {
-                controller.apply_update_result(result, cx)
-            });
-        })
-        .detach();
+        run_off_thread(
+            cx,
+            crate::win::update::fetch_latest,
+            |controller, result, cx| controller.apply_update_result(result, cx),
+        );
     }
 
     pub(super) fn install_update_from_dialog(&mut self, version: String, cx: &mut Context<Self>) {
@@ -84,26 +109,24 @@ impl Controller {
                 .body("Downloading and verifying update..."),
             cx,
         );
-        cx.spawn(async move |this, cx| {
-            let version_clone = version.clone();
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    let downloaded = crate::win::update::download_release(&version_clone)?;
-                    let canonical = config::canonical_exe_path();
-                    let pid = std::process::id();
-                    crate::win::update::spawn_swap_helper(pid, &canonical, &downloaded)?;
-                    if !config::save_install(&config::InstallRecord {
-                        path: canonical.to_string_lossy().into_owned(),
-                        version: version_clone.clone(),
-                        pid,
-                    }) {
-                        return Err("failed to write install record".to_string());
-                    }
-                    Ok(version_clone)
-                })
-                .await;
-            let _ = this.update(cx, |controller, cx| match result {
+        let install_version = version.clone();
+        run_off_thread(
+            cx,
+            move || {
+                let downloaded = crate::win::update::download_release(&install_version)?;
+                let canonical = config::canonical_exe_path();
+                let pid = std::process::id();
+                crate::win::update::spawn_swap_helper(pid, &canonical, &downloaded)?;
+                if !config::save_install(&config::InstallRecord {
+                    path: canonical.to_string_lossy().into_owned(),
+                    version: install_version.clone(),
+                    pid,
+                }) {
+                    return Err("failed to write install record".to_string());
+                }
+                Ok(install_version)
+            },
+            move |controller, result, cx| match result {
                 Ok(v) => {
                     controller.push_toast(
                         Toast::new("Installing update")
@@ -120,9 +143,8 @@ impl Controller {
                     cx.notify();
                     controller.push_toast(update_toast("Update failed", Severity::Danger, err), cx);
                 }
-            });
-        })
-        .detach();
+            },
+        );
     }
 
     fn apply_update_result(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
