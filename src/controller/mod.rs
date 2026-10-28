@@ -156,10 +156,40 @@ impl Controller {
         controller
     }
 
+    /// The installed copy, when it is already running.
+    fn running_canonical() -> Option<u32> {
+        let record = config::load_install()?;
+        let canonical = config::canonical_exe_path();
+        let same = record
+            .path
+            .eq_ignore_ascii_case(&canonical.to_string_lossy());
+        (same && record.pid != std::process::id() && crate::win::process_alive(record.pid))
+            .then_some(record.pid)
+    }
+
     fn execute_startup_plan(plan: crate::core::install::Plan) {
         match plan {
             crate::core::install::Plan::Dev => {}
             crate::core::install::Plan::Run { exe, canonical } => {
+                if !canonical && crate::config::paths::is_legacy_install(&exe) {
+                    if let Some(pid) = Self::running_canonical() {
+                        if activate_process(pid) {
+                            crate::win::shell::info_message(
+                                "Slate is already running",
+                                "Switching to the open window.",
+                            );
+                        }
+                        std::process::exit(0);
+                    }
+                    if let Err(err) = crate::win::update::relocate(&exe) {
+                        crate::win::shell::info_message(
+                            "Could not move Slate to its install folder",
+                            &err,
+                        );
+                        std::process::exit(1);
+                    }
+                    std::process::exit(0);
+                }
                 config::save_install(&config::InstallRecord {
                     path: exe,
                     version: crate::core::update::CURRENT_VERSION.to_string(),

@@ -87,11 +87,7 @@ impl Controller {
         };
         self.settings.theme = next.to_string();
         self.apply_theme(cx);
-        self.save_theme();
-    }
-
-    fn save_theme(&self) {
-        let _ = config::save_theme(&self.settings.theme, &self.settings.accent);
+        self.save_settings();
     }
 
     pub(super) fn ensure_icon(&mut self, hwnd: isize) {

@@ -200,15 +200,22 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | ---- | ------- |
 | `%LOCALAPPDATA%\Programs\Burntfern\Slate\` | Install directory (contains `slate.exe`) |
 | `%LOCALAPPDATA%\Burntfern\Slate\` | Data directory |
-| `%LOCALAPPDATA%\Burntfern\Slate\config.json` | Theme and accent - edit it, then **Reload settings** from the Slate menu |
-| `%LOCALAPPDATA%\Burntfern\Slate\settings.json` | Tab, preview, and shortcut settings |
+| `%LOCALAPPDATA%\Burntfern\Slate\settings.json` | Theme, accent, tab, preview, and shortcut settings |
 | `%LOCALAPPDATA%\Burntfern\Slate\sets.json` | Saved tab sets |
+| `%LOCALAPPDATA%\Burntfern\Slate\session.json` | Tabs restored on the next launch |
 | `%LOCALAPPDATA%\Burntfern\Slate\install.json` | Registered copy (path, version, pid) used by updates and single-instance checks |
-| `%LOCALAPPDATA%\Burntfern\Slate\slate.log` | Logs |
+| `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
 | `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap helper |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |
 
-On first run, Slate migrates from `%USERPROFILE%\.burntfern\` automatically with a backup of the old folder. Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe to store everything alongside it.
+On first run, Slate copies settings, sets, session, and the install record out of
+`%USERPROFILE%\.burntfern\` (the newest copy wins when both layouts have a
+file), moves the installed `slate.exe` into
+`%LOCALAPPDATA%\Programs\Burntfern\Slate\`, and then deletes
+`%USERPROFILE%\.burntfern\slate` once nothing in it is still needed. The rest of
+`.burntfern` is left alone: other Burntfern apps keep data there. Portable mode:
+set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe to keep
+settings, sets, session, updates, and logs in `data\` beside it.
 
 ## Limitations
 
@@ -219,7 +226,7 @@ control, and GDI icon extraction.
 open, it covers the active member. Tooltips and toasts that overlap a hosted
 window have the same problem.
 
-**`3. Accent is config-file only`** - the accent hue lives in `config.json`.
+**`3. Accent is config-file only`** - the accent hue lives in `settings.json`.
 Change it there, then pick **Reload settings** in the Slate menu; there is no
 accent picker in the UI.
 

@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 
+use super::paths;
 use super::schema::{SavedSet, SavedSets, Session, Settings, SCHEMA_VERSION};
 
 #[derive(Debug, Default)]
@@ -37,53 +38,6 @@ struct PartialKeybinds {
     select_tab: Option<String>,
 }
 
-fn home_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("USERPROFILE") {
-        let dir = PathBuf::from(dir);
-        if !dir.as_os_str().is_empty() {
-            return dir;
-        }
-    }
-    let drive = std::env::var_os("HOMEDRIVE");
-    let path = std::env::var_os("HOMEPATH");
-    if let (Some(drive), Some(path)) = (drive, path) {
-        let mut combined = PathBuf::from(drive);
-        combined.push(path);
-        if !combined.as_os_str().is_empty() {
-            return combined;
-        }
-    }
-    std::env::temp_dir()
-}
-
-pub fn burntfern_root() -> PathBuf {
-    home_dir().join(".burntfern")
-}
-
-pub fn app_dir() -> PathBuf {
-    burntfern_root().join("slate")
-}
-
-pub fn shared_config_path() -> PathBuf {
-    burntfern_root().join("config.json")
-}
-
-pub fn settings_path() -> PathBuf {
-    app_dir().join("settings.json")
-}
-
-pub fn sets_path() -> PathBuf {
-    app_dir().join("sets.json")
-}
-
-pub fn session_path() -> PathBuf {
-    app_dir().join("session.json")
-}
-
-pub fn backups_dir() -> PathBuf {
-    app_dir().join("backups")
-}
-
 fn template_dir() -> Option<PathBuf> {
     let beside_exe = std::env::current_exe()
         .ok()
@@ -95,34 +49,199 @@ fn template_dir() -> Option<PathBuf> {
         .find(|dir| dir.is_dir())
 }
 
+/// Creates the data tree, migrates the pre-0.5 layout, seeds missing files.
 pub fn ensure() {
-    for dir in [burntfern_root(), app_dir(), backups_dir()] {
-        let _ = std::fs::create_dir_all(dir);
+    paths::ensure_dirs();
+    if paths::is_portable() {
+        seed_defaults();
+        return;
     }
-    if !shared_config_path().exists() {
-        seed("config.json", &shared_config_path(), &SharedSeed);
+    let complete = migrate_legacy(&paths::legacy_root(), &paths::data_dir());
+    if !complete {
+        tracing::warn!("legacy config migration incomplete; retrying next launch");
+        return;
     }
-    if !settings_path().exists() {
-        seed("slate\\settings.json", &settings_path(), &AppSeed);
+    seed_defaults();
+    cleanup_legacy();
+}
+
+fn seed_defaults() {
+    if !paths::settings_path().exists() {
+        seed("slate\\settings.json", &paths::settings_path(), &AppSeed);
     }
-    if !sets_path().exists() {
-        seed("slate\\sets.json", &sets_path(), &SetsSeed);
+    if !paths::sets_path().exists() {
+        seed("slate\\sets.json", &paths::sets_path(), &SetsSeed);
     }
+}
+
+/// Copies the old layout over, keeping whichever copy of a file is newer.
+fn migrate_legacy(old_root: &Path, new_root: &Path) -> bool {
+    if !old_root.is_dir() {
+        return true;
+    }
+    let old_app = old_root.join("slate");
+    let backups = new_root.join("backups");
+    let mut complete = true;
+    for name in ["settings.json", "sets.json", "session.json", "install.json"] {
+        let src = old_app.join(name);
+        let dest = new_root.join(name);
+        if !src.is_file() {
+            continue;
+        }
+        if dest.exists() {
+            if !source_is_newer(&src, &dest) {
+                continue;
+            }
+            backup_into(&backups, &dest);
+        }
+        if let Err(err) = copy_json(&src, &dest) {
+            tracing::warn!("could not migrate {}: {err}", src.display());
+            complete = false;
+        }
+    }
+    if !merge_theme_sources(old_root, new_root) {
+        complete = false;
+    }
+    complete
+}
+
+fn source_is_newer(src: &Path, dest: &Path) -> bool {
+    let modified = |path: &Path| path.metadata().and_then(|meta| meta.modified()).ok();
+    match (modified(src), modified(dest)) {
+        (Some(src), Some(dest)) => src > dest,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+fn copy_json(src: &Path, dest: &Path) -> std::io::Result<()> {
+    let bytes = std::fs::read(src)?;
+    serde_json::from_slice::<Value>(&bytes).map_err(std::io::Error::other)?;
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    super::save::atomic_write(dest, &bytes)
+}
+
+/// Folds theme and accent into settings.json, from the newest config.json.
+fn merge_theme_sources(old_root: &Path, new_root: &Path) -> bool {
+    let settings = new_root.join("settings.json");
+    let new_config = new_root.join("config.json");
+    let mut merged = std::fs::read_to_string(&settings)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({ "schema_version": SCHEMA_VERSION }));
+    let has_theme = merged.get("theme").and_then(Value::as_str).is_some();
+    let has_accent = merged.get("accent").and_then(Value::as_str).is_some();
+    let mut changed = false;
+    if !(has_theme && has_accent) {
+        if let Some((theme, accent)) = newest_theme(&old_root.join("config.json"), &new_config) {
+            if let Some(object) = merged.as_object_mut() {
+                object.insert("schema_version".into(), SCHEMA_VERSION.into());
+                if !has_theme {
+                    if let Some(theme) = theme {
+                        object.insert("theme".into(), theme.into());
+                        changed = true;
+                    }
+                }
+                if !has_accent {
+                    if let Some(accent) = accent {
+                        object.insert("accent".into(), accent.into());
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    if changed {
+        let Ok(mut text) = serde_json::to_string_pretty(&merged) else {
+            return false;
+        };
+        text.push('\n');
+        if let Some(dir) = settings.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if super::save::atomic_write(&settings, text.as_bytes()).is_err() {
+            return false;
+        }
+    }
+    if new_config.is_file() {
+        backup_into(&new_root.join("backups"), &new_config);
+    }
+    true
+}
+
+fn newest_theme(old_config: &Path, new_config: &Path) -> Option<(Option<String>, Option<String>)> {
+    let mut best: Option<(std::time::SystemTime, Option<String>, Option<String>)> = None;
+    for path in [old_config, new_config] {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            continue;
+        };
+        let theme = value
+            .get("theme")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let accent = value
+            .get("accent")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if theme.is_none() && accent.is_none() {
+            continue;
+        }
+        let modified = path
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().is_none_or(|(stamp, ..)| modified >= *stamp) {
+            best = Some((modified, theme, accent));
+        }
+    }
+    best.map(|(_, theme, accent)| (theme, accent))
+}
+
+/// Removes the old app folder only, never the shared ~/.burntfern root.
+fn cleanup_legacy() {
+    let old_root = paths::legacy_root();
+    let old_app = old_root.join("slate");
+    if !old_app.is_dir() {
+        return;
+    }
+    if current_exe_dir().is_some_and(|dir| same_dir(&dir, &old_app)) {
+        return;
+    }
+    let old_exe = old_app.join(crate::core::install::CANONICAL_NAME);
+    let new_exe = paths::install_dir().join(crate::core::install::CANONICAL_NAME);
+    if old_exe.exists() && !new_exe.exists() {
+        return;
+    }
+    if std::fs::remove_dir_all(&old_app).is_err() {
+        return;
+    }
+    let _ = std::fs::remove_dir(&old_root);
+}
+
+fn current_exe_dir() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a.as_os_str()
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&b.to_string_lossy())
 }
 
 trait Seed {
     fn content(&self) -> String;
 }
 
-struct SharedSeed;
 struct AppSeed;
 struct SetsSeed;
-
-impl Seed for SharedSeed {
-    fn content(&self) -> String {
-        "{ \"schema_version\": 1, \"theme\": \"system\", \"accent\": \"blue\" }\n".to_string()
-    }
-}
 
 impl Seed for AppSeed {
     fn content(&self) -> String {
@@ -171,18 +290,15 @@ fn write_new(dest: &Path, bytes: &[u8]) -> bool {
 }
 
 pub fn load() -> Settings {
-    let mut merged = Settings::default();
-    if let Some(partial) = read_partial(&shared_config_path(), false) {
-        apply(&mut merged, partial);
+    let mut settings = Settings::default();
+    if let Some(partial) = read_partial(&paths::settings_path()) {
+        apply(&mut settings, partial);
     }
-    if let Some(partial) = read_partial(&settings_path(), true) {
-        apply(&mut merged, partial);
-    }
-    merged
+    settings
 }
 
 pub fn load_sets() -> SavedSets {
-    let path = sets_path();
+    let path = paths::sets_path();
     let Ok(text) = std::fs::read_to_string(&path) else {
         return SavedSets::default();
     };
@@ -202,7 +318,7 @@ pub fn load_sets() -> SavedSets {
 }
 
 pub fn load_session() -> Session {
-    let path = session_path();
+    let path = paths::session_path();
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Session::default();
     };
@@ -248,7 +364,7 @@ fn assign_ids(sets: &mut [SavedSet]) {
     }
 }
 
-fn read_partial(path: &Path, app: bool) -> Option<PartialSettings> {
+fn read_partial(path: &Path) -> Option<PartialSettings> {
     let text = std::fs::read_to_string(path).ok()?;
     let value: Value = match serde_json::from_str(&text) {
         Ok(value) => value,
@@ -261,7 +377,7 @@ fn read_partial(path: &Path, app: bool) -> Option<PartialSettings> {
         backup(path);
         return None;
     }
-    Some(partial_from_value(migrate(value), app))
+    Some(partial_from_value(migrate(value)))
 }
 
 fn schema_version_of(value: &Value) -> u64 {
@@ -271,13 +387,13 @@ fn schema_version_of(value: &Value) -> u64 {
         .unwrap_or(0)
 }
 
-fn partial_from_value(value: Value, app: bool) -> PartialSettings {
-    let mut partial = PartialSettings::default();
-    if !app {
-        partial.theme = str_field(&value, "theme");
-        partial.accent = str_field(&value, "accent");
-    }
-    partial.restore_session = bool_field(&value, "restore_session");
+fn partial_from_value(value: Value) -> PartialSettings {
+    let mut partial = PartialSettings {
+        theme: str_field(&value, "theme"),
+        accent: str_field(&value, "accent"),
+        restore_session: bool_field(&value, "restore_session"),
+        ..PartialSettings::default()
+    };
     if let Some(tabs) = value.get("tabs") {
         partial.tabs = Some(PartialTabs {
             icons: bool_field(tabs, "icons"),
@@ -375,17 +491,21 @@ fn migrate(mut value: Value) -> Value {
 }
 
 fn backup(path: &Path) {
+    backup_into(&paths::backups_dir(), path);
+}
+
+fn backup_into(dir: &Path, path: &Path) {
     let Some(name) = path.file_name() else {
         return;
     };
-    let _ = std::fs::create_dir_all(backups_dir());
+    let _ = std::fs::create_dir_all(dir);
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
-    let dest = backups_dir().join(format!("{}.{stamp}.{n}", name.to_string_lossy()));
+    let dest = dir.join(format!("{}.{stamp}.{n}", name.to_string_lossy()));
     let _ = std::fs::rename(path, dest);
 }
 
@@ -424,7 +544,7 @@ mod tests {
             "keybinds": { "next_tab": "nonsense", "prev_tab": "ctrl+tab" }
         });
         let mut s = Settings::default();
-        apply(&mut s, partial_from_value(value, true));
+        apply(&mut s, partial_from_value(value));
         assert_eq!(s.keybinds.prev_tab, "ctrl+tab");
         assert_eq!(s.keybinds.close_tab, "ctrl+w");
         let bindings = s.keybinds.bindings();
@@ -436,35 +556,15 @@ mod tests {
     }
 
     #[test]
-    fn shared_then_app_precedence() {
-        let mut s = Settings::default();
-        apply(
-            &mut s,
-            PartialSettings {
-                theme: Some("light".into()),
-                ..Default::default()
-            },
-        );
-        apply(
-            &mut s,
-            PartialSettings {
-                theme: Some("dark".into()),
-                ..Default::default()
-            },
-        );
-        assert_eq!(s.theme, "dark");
-    }
-
-    #[test]
-    fn app_partial_ignores_theme_and_accent() {
+    fn settings_partial_reads_theme_and_accent() {
         let value = serde_json::json!({
             "theme": "dark",
             "accent": "red",
             "tabs": { "icons": false }
         });
-        let partial = partial_from_value(value, true);
-        assert!(partial.theme.is_none());
-        assert!(partial.accent.is_none());
+        let partial = partial_from_value(value);
+        assert_eq!(partial.theme.as_deref(), Some("dark"));
+        assert_eq!(partial.accent.as_deref(), Some("red"));
         assert_eq!(partial.tabs.and_then(|t| t.icons), Some(false));
     }
 
@@ -475,7 +575,7 @@ mod tests {
             "accent": "red",
             "tabs": { "icons": "yes", "count_badge": false }
         });
-        let partial = partial_from_value(value, false);
+        let partial = partial_from_value(value);
         assert!(partial.theme.is_none());
         assert_eq!(partial.accent.as_deref(), Some("red"));
         let tabs = partial.tabs.unwrap();
@@ -560,5 +660,145 @@ mod tests {
         };
         let value = crate::config::save::app_value(&settings);
         assert_eq!(value["restore_session"], false);
+        assert_eq!(value["theme"], "system");
+        assert_eq!(value["accent"], "blue");
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "slate-config-test-{}-{name}-{n}",
+            std::process::id()
+        ))
+    }
+
+    fn write_at(path: &Path, text: &str, modified: std::time::SystemTime) {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(path, text).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+    }
+
+    #[test]
+    fn migration_copies_state_and_merges_theme() {
+        let old = scratch("old");
+        let new = scratch("new");
+        std::fs::create_dir_all(old.join("slate")).unwrap();
+        std::fs::write(
+            old.join("slate").join("settings.json"),
+            r#"{ "schema_version": 1, "restore_session": false }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            old.join("slate").join("sets.json"),
+            r#"{ "schema_version": 1, "sets": [] }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            old.join("config.json"),
+            r#"{ "theme": "dark", "accent": "red" }"#,
+        )
+        .unwrap();
+
+        assert!(migrate_legacy(&old, &new));
+
+        let text = std::fs::read_to_string(new.join("settings.json")).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["restore_session"], false);
+        assert_eq!(value["theme"], "dark");
+        assert_eq!(value["accent"], "red");
+        assert!(new.join("sets.json").is_file());
+
+        let _ = std::fs::remove_dir_all(&old);
+        let _ = std::fs::remove_dir_all(&new);
+    }
+
+    #[test]
+    fn migration_refuses_corrupt_files() {
+        let old = scratch("corrupt-old");
+        let new = scratch("corrupt-new");
+        std::fs::create_dir_all(old.join("slate")).unwrap();
+        std::fs::write(old.join("slate").join("sets.json"), "not json").unwrap();
+
+        assert!(!migrate_legacy(&old, &new));
+        assert!(!new.join("sets.json").exists());
+
+        let _ = std::fs::remove_dir_all(&old);
+        let _ = std::fs::remove_dir_all(&new);
+    }
+
+    #[test]
+    fn migration_is_a_noop_without_a_legacy_dir() {
+        let old = scratch("absent-old");
+        let new = scratch("absent-new");
+        assert!(migrate_legacy(&old, &new));
+        assert!(!new.exists());
+    }
+
+    #[test]
+    fn newer_legacy_copy_replaces_a_stale_destination() {
+        let old = scratch("newer-old");
+        let new = scratch("newer-new");
+        let now = std::time::SystemTime::now();
+        let hour = std::time::Duration::from_secs(3600);
+
+        write_at(
+            &new.join("settings.json"),
+            r#"{ "theme": "light" }"#,
+            now - hour,
+        );
+        write_at(
+            &new.join("config.json"),
+            r#"{ "accent": "red" }"#,
+            now - hour,
+        );
+        write_at(
+            &old.join("slate").join("settings.json"),
+            r#"{ "theme": "dark" }"#,
+            now,
+        );
+
+        assert!(migrate_legacy(&old, &new));
+
+        let text = std::fs::read_to_string(new.join("settings.json")).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["theme"], "dark");
+        assert_eq!(value["accent"], "red");
+        assert!(!new.join("config.json").exists());
+        let backups = std::fs::read_dir(new.join("backups")).unwrap().count();
+        assert_eq!(backups, 2);
+
+        let _ = std::fs::remove_dir_all(&old);
+        let _ = std::fs::remove_dir_all(&new);
+    }
+
+    #[test]
+    fn older_legacy_copy_does_not_replace_a_newer_destination() {
+        let old = scratch("older-old");
+        let new = scratch("older-new");
+        let now = std::time::SystemTime::now();
+        let hour = std::time::Duration::from_secs(3600);
+
+        write_at(
+            &old.join("slate").join("settings.json"),
+            r#"{ "theme": "dark" }"#,
+            now - hour,
+        );
+        write_at(&new.join("settings.json"), r#"{ "theme": "light" }"#, now);
+
+        assert!(migrate_legacy(&old, &new));
+        let text = std::fs::read_to_string(new.join("settings.json")).unwrap();
+        assert!(text.contains("light"));
+        assert!(!new.join("backups").exists());
+
+        let _ = std::fs::remove_dir_all(&old);
+        let _ = std::fs::remove_dir_all(&new);
     }
 }

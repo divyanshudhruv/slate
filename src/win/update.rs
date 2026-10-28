@@ -62,6 +62,32 @@ pub fn bootstrap(source: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Copies a pre-0.5 install into the install dir, then relaunches it there.
+pub fn relocate(source: &str) -> Result<(), String> {
+    info!("relocating install from {source}");
+    let canonical = config::canonical_exe_path();
+    let Some(parent) = canonical.parent() else {
+        return Err("install dir has no parent".to_string());
+    };
+    fs::create_dir_all(parent).map_err(|err| format!("install dir: {err}"))?;
+    if !canonical.exists() {
+        fs::copy(source, &canonical).map_err(|err| format!("copy exe: {err}"))?;
+    }
+    if !config::save_install(&config::InstallRecord {
+        path: canonical.to_string_lossy().into_owned(),
+        version: crate::core::update::CURRENT_VERSION.to_string(),
+        pid: 0,
+    }) {
+        return Err("failed to write install record".to_string());
+    }
+    Command::new(&canonical)
+        .creation_flags(CREATE_NO_WINDOW.0)
+        .spawn()
+        .map_err(|err| format!("launch: {err}"))?;
+    info!("relaunched from {}", canonical.display());
+    Ok(())
+}
+
 pub fn refresh_install_from(candidate: &str) -> Result<(), String> {
     info!("refresh install from {candidate}");
     let candidate_path = Path::new(candidate);

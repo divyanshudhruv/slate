@@ -188,6 +188,8 @@ impl Keybinds {
 #[derive(Serialize)]
 pub struct AppSettings<'a> {
     pub schema_version: u32,
+    pub theme: &'a str,
+    pub accent: &'a str,
     pub restore_session: bool,
     pub tabs: &'a Tabs,
     pub updates: &'a Updates,

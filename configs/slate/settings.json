@@ -1,5 +1,7 @@
 {
   "schema_version": 1,
+  "theme": "system",
+  "accent": "blue",
   "restore_session": true,
   "tabs": {
     "icons": true,
@@ -16,11 +18,5 @@
   "updates": {
     "latest": null,
     "checked_at": 0
-  },
-  "keybinds": {
-    "next_tab": "ctrl+tab",
-    "prev_tab": "ctrl+shift+tab",
-    "close_tab": "ctrl+w",
-    "select_tab": "ctrl+1"
   }
 }
