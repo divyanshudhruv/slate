@@ -235,21 +235,27 @@ impl Controller {
     }
 
     fn start_event_pump(cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(crate::timings::UI_TICK)
-                .await;
-            if this
-                .update(cx, |controller, cx| controller.tick(cx))
-                .is_err()
-            {
-                break;
+        cx.spawn(async move |this, cx| {
+            let mut delay = crate::timings::UI_TICK;
+            loop {
+                cx.background_executor().timer(delay).await;
+                match this.update(cx, |controller, cx| controller.tick(cx)) {
+                    Ok(busy) => {
+                        delay = if busy {
+                            crate::timings::UI_TICK
+                        } else {
+                            crate::timings::UI_IDLE_TICK
+                        };
+                    }
+                    Err(_) => break,
+                }
             }
         })
         .detach();
     }
 
-    fn tick(&mut self, cx: &mut Context<Self>) {
+    /// Returns true while the host is busy enough to stay on the fast tick.
+    fn tick(&mut self, cx: &mut Context<Self>) -> bool {
         self.flush_save_error(cx);
         let mut changed = self.drain_events();
         let shortcuts = self
@@ -266,6 +272,18 @@ impl Controller {
             self.sync_worker();
             cx.notify();
         }
+        changed
+            || self.picking
+            || self.drag.is_some()
+            || self.hover_preview.is_some()
+            || self.overlay
+            || self.tab_menu_open
+            || self.picker_open
+            || self.saved_menu_open
+            || self.tab_menu.is_some()
+            || self.renaming.is_some()
+            || self.saved_prompt.is_some()
+            || self.dialog.is_some()
     }
 
     pub fn host_info(&self) -> Arc<HostInfo> {

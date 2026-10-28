@@ -52,6 +52,12 @@ impl Controller {
                         changed = true;
                     }
                 }
+                WinEvent::Moved(hwnd) => {
+                    let active = self.active_group.and_then(|g| self.active_hwnd(g));
+                    if Some(hwnd) == self.host_hwnd || Some(hwnd) == active {
+                        self.worker.nudge();
+                    }
+                }
                 _ => {}
             }
         }

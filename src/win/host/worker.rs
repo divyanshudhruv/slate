@@ -92,12 +92,13 @@ impl HostWorker {
         let wake = self.inner.wake.clone();
         thread::spawn(move || {
             let mut last = WorkerState::default();
+            let mut wait = crate::timings::MEMBER_SYNC;
             while running.load(Ordering::Relaxed) {
                 {
                     let (lock, cvar) = &*wake;
                     let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
                     let _ = cvar
-                        .wait_timeout(guard, crate::timings::MEMBER_SYNC)
+                        .wait_timeout(guard, wait)
                         .unwrap_or_else(|e| e.into_inner());
                 }
                 if !running.load(Ordering::Relaxed) {
@@ -117,8 +118,17 @@ impl HostWorker {
                     let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
                     s.inset = last.inset;
                 }
+                wait = if last.settle > 0 {
+                    crate::timings::MEMBER_SYNC
+                } else {
+                    crate::timings::MEMBER_SYNC_IDLE
+                };
             }
         });
+    }
+
+    pub fn nudge(&self) {
+        self.inner.wake.1.notify_all();
     }
 
     pub fn stop(&self) {

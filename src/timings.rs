@@ -2,10 +2,14 @@ use std::time::Duration;
 
 /// How often the controller processes queued work while active.
 pub const UI_TICK: Duration = Duration::from_millis(50);
+/// Backoff for the controller when nothing is interacting with the host.
+pub const UI_IDLE_TICK: Duration = Duration::from_millis(250);
 /// How often the pick overlay checks for Tab/Escape.
 pub const PICK_POLL: Duration = Duration::from_millis(40);
-/// How often the host worker re-checks member windows.
+/// How often the host worker re-checks member windows while settling.
 pub const MEMBER_SYNC: Duration = Duration::from_millis(50);
+/// Idle member sync interval; location events wake the worker sooner.
+pub const MEMBER_SYNC_IDLE: Duration = Duration::from_millis(250);
 /// Extra passes that re-place a member after a move, for apps that fight it.
 pub const SETTLE_PASSES: u8 = 12;
 /// How long the hover card lingers after the pointer leaves.
