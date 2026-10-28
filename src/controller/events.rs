@@ -10,11 +10,17 @@ impl Controller {
         let mut changed = false;
         for event in WinEventPump::drain() {
             match event {
-                WinEvent::Destroyed(hwnd)
-                    if self.styling.contains_key(&hwnd) || self.groups.contains_window(hwnd) =>
-                {
-                    self.window_gone(hwnd);
-                    changed = true;
+                WinEvent::Destroyed(hwnd) => {
+                    let hosted =
+                        self.styling.contains_key(&hwnd) || self.groups.contains_window(hwnd);
+                    if hosted {
+                        self.window_gone(hwnd);
+                        changed = true;
+                    } else {
+                        let icon = self.icons.remove(&hwnd).is_some();
+                        let snapshot = self.snapshots.remove(&hwnd).is_some();
+                        changed |= icon || snapshot;
+                    }
                 }
                 WinEvent::TitleChanged(hwnd)
                     if self.styling.contains_key(&hwnd)

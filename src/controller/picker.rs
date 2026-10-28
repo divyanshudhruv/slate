@@ -11,6 +11,9 @@ impl Controller {
             self.close_other_dropdowns();
             self.windows = enumerate_windows();
             self.refresh_picker();
+        } else {
+            let hosted: HashSet<isize> = self.styling.keys().copied().collect();
+            self.icons.retain(|hwnd, _| hosted.contains(hwnd));
         }
         self.picker_open = open;
     }
