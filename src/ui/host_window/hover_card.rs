@@ -6,41 +6,33 @@ use gpui::{div, px, AnimationExt, App, Pixels, Size, Window};
 
 use super::overlays::enter_animation;
 use crate::controller::{HoverPreview, TabInfo};
+use crate::ui::metrics::{CARD_GAP, CARD_H, CARD_IMAGE_H, CARD_MARGIN, CARD_W};
 
-pub(super) fn hover_card(
+pub(crate) fn hover_card(
     cx: &App,
     preview: &HoverPreview,
     tab: Option<&TabInfo>,
     viewport: Size<Pixels>,
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> gpui::AnyElement {
-    const CARD_W: f32 = 224.0;
-    const IMAGE_H: f32 = 126.0;
-    const CARD_H: f32 = IMAGE_H + 40.0;
-    const MARGIN: f32 = 8.0;
-    const GAP: f32 = 6.0;
     let theme = cx.theme();
     let colors = &theme.colors;
     let rad_lg = theme.radius(Radius::Lg);
     let (x, y, _w, h) = preview.anchor;
-    let vh = viewport.height.as_f32();
-    let left = x.min(viewport.width.as_f32() - CARD_W - MARGIN).max(MARGIN);
-    let below = y + h + GAP;
-    let top = if below + CARD_H <= vh - MARGIN {
-        below
-    } else {
-        (y - GAP - CARD_H).max(MARGIN)
-    };
+    let (left, top) = card_origin(
+        (x, y, h),
+        (viewport.width.as_f32(), viewport.height.as_f32()),
+    );
 
     let image = match preview.image.clone() {
         Some(img) => Image::new(("host-hover-shot", 0usize), img)
             .rounded_t(rad_lg)
             .w_full()
-            .h(px(IMAGE_H))
+            .h(px(CARD_IMAGE_H))
             .into_any_element(),
         None => div()
             .w_full()
-            .h(px(IMAGE_H))
+            .h(px(CARD_IMAGE_H))
             .rounded_t(rad_lg)
             .flex()
             .items_center()
@@ -77,6 +69,7 @@ pub(super) fn hover_card(
         .child(
             div()
                 .flex_1()
+                .min_w_0()
                 .overflow_hidden()
                 .text_size(theme.text_size(TextSize::Sm))
                 .text_color(colors.fg)
@@ -106,4 +99,56 @@ pub(super) fn hover_card(
         )
         .child(card)
         .into_any_element()
+}
+
+/// Places the card under its tab, flipping above it and clamping inside the viewport.
+/// `anchor` is the tab's x, y and height.
+pub(super) fn card_origin(anchor: (f32, f32, f32), viewport: (f32, f32)) -> (f32, f32) {
+    let (x, y, h) = anchor;
+    let left = x.min(viewport.0 - CARD_W - CARD_MARGIN).max(CARD_MARGIN);
+    let below = y + h + CARD_GAP;
+    let top = if below + CARD_H <= viewport.1 - CARD_MARGIN {
+        below
+    } else {
+        (y - CARD_GAP - CARD_H).max(CARD_MARGIN)
+    };
+    (left, top)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::card_origin;
+    use crate::ui::metrics::{CARD_GAP, CARD_H, CARD_MARGIN, CARD_W};
+
+    #[test]
+    fn a_card_under_a_tab_sits_below_it() {
+        let (left, top) = card_origin((200.0, 20.0, 28.0), (1000.0, 800.0));
+        assert_eq!(left, 200.0);
+        assert_eq!(top, 20.0 + 28.0 + CARD_GAP);
+    }
+
+    #[test]
+    fn a_card_past_the_right_edge_pulls_back() {
+        let (left, _) = card_origin((990.0, 20.0, 28.0), (1000.0, 800.0));
+        assert_eq!(left, 1000.0 - CARD_W - CARD_MARGIN);
+    }
+
+    #[test]
+    fn a_card_off_the_left_edge_stays_a_margin_in() {
+        let (left, _) = card_origin((-40.0, 20.0, 28.0), (1000.0, 800.0));
+        assert_eq!(left, CARD_MARGIN);
+    }
+
+    #[test]
+    fn a_card_with_no_room_below_flips_above_the_tab() {
+        let (_, top) = card_origin((200.0, 760.0, 28.0), (1000.0, 800.0));
+        assert_eq!(top, 760.0 - CARD_GAP - CARD_H);
+        assert!(top >= CARD_MARGIN);
+    }
+
+    #[test]
+    fn a_card_that_fits_neither_way_stays_a_margin_from_the_top() {
+        let (_, top) = card_origin((200.0, 40.0, 28.0), (1000.0, 200.0));
+        assert_eq!(top, CARD_MARGIN);
+    }
 }

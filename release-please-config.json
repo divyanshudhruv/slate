@@ -12,6 +12,8 @@
         { "type": "fix", "section": "Bug Fixes" },
         { "type": "perf", "section": "Performance" },
         { "type": "refactor", "section": "Refactoring" },
+        { "type": "style", "section": "Styling" },
+        { "type": "test", "section": "Tests" },
         { "type": "docs", "section": "Documentation" },
         { "type": "build", "section": "Build System", "hidden": true },
         { "type": "init", "section": "Initialization", "hidden": true },

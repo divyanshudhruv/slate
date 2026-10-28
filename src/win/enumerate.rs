@@ -9,7 +9,7 @@ use windows::Win32::System::Threading::PROCESS_NAME_WIN32;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GW_OWNER,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 
 thread_local! {
@@ -17,6 +17,9 @@ thread_local! {
     static TEXT_BUF: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
     static CLASS_BUF: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
 }
+
+/// Starting room for a process image path; grows when the real path is longer.
+const MAX_PATH_WIDE: usize = 4096;
 
 struct PidMeta {
     exe_path: String,
@@ -49,10 +52,11 @@ unsafe fn is_candidate(hwnd: HWND) -> bool {
     if !IsWindowVisible(hwnd).as_bool() {
         return false;
     }
-    if GetWindow(hwnd, GW_OWNER).is_ok() {
+    let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+    // Owned windows are usually dialogs, but a main window that declares WS_EX_APPWINDOW wants its own taskbar entry and is worth hosting.
+    if GetWindow(hwnd, GW_OWNER).is_ok() && ex & WS_EX_APPWINDOW.0 == 0 {
         return false;
     }
-    let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
     if ex & WS_EX_TOOLWINDOW.0 != 0 || ex & WS_EX_NOACTIVATE.0 != 0 {
         return false;
     }
@@ -162,14 +166,26 @@ fn process_path(pid: u32) -> Option<String> {
     };
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut buf = vec![0u16; 1024];
+        // Long paths are real; start big enough for almost all of them and retry if not.
+        let mut buf = vec![0u16; MAX_PATH_WIDE];
         let mut len = buf.len() as u32;
-        let result = QueryFullProcessImageNameW(
+        let mut result = QueryFullProcessImageNameW(
             process,
             PROCESS_NAME_WIN32,
             PWSTR(buf.as_mut_ptr()),
             &mut len,
         );
+        while result.is_err() && len as usize >= buf.len() {
+            let want = (len as usize).max(buf.len() * 2);
+            buf.resize(want, 0);
+            len = buf.len() as u32;
+            result = QueryFullProcessImageNameW(
+                process,
+                PROCESS_NAME_WIN32,
+                PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            );
+        }
         let _ = CloseHandle(process);
         result.ok()?;
         buf.truncate(len as usize);

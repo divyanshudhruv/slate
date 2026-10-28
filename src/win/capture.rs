@@ -6,9 +6,21 @@ use windows::Win32::Graphics::Gdi::{
     GetDIBits, ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO,
     BITMAPINFOHEADER, DIB_RGB_COLORS, HALFTONE, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetClientRect, GetForegroundWindow, IsHungAppWindow, IsIconic,
+};
 
-const MAX_W: i32 = 512;
+/// Twice the hover card width, so previews stay crisp at 2x DPI without huge frames.
+const MAX_W: i32 = 448;
+
+const PW_CLIENTONLY: u32 = 1;
+const PW_RENDERFULLCONTENT: u32 = 2;
+
+// `PrintWindow` sits behind the crate's XPS feature, so declare it locally.
+#[link(name = "user32")]
+extern "system" {
+    fn PrintWindow(hwnd: HWND, hdc: HDC, flags: u32) -> i32;
+}
 
 pub struct WindowSnapshot {
     pub width: u32,
@@ -20,7 +32,13 @@ pub fn capture_window(hwnd: isize) -> Option<WindowSnapshot> {
     if hwnd == 0 {
         return None;
     }
-    unsafe { grab(hwnd) }
+    for _ in 0..2 {
+        if let Some(snapshot) = unsafe { grab_once(hwnd) } {
+            return Some(snapshot);
+        }
+        POOL.with(|pool| *pool.borrow_mut() = None);
+    }
+    None
 }
 
 struct ScreenDc(HDC);
@@ -57,16 +75,15 @@ thread_local! {
     static POOL: RefCell<Option<Pooled>> = const { RefCell::new(None) };
 }
 
-unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
+unsafe fn grab_once(hwnd: isize) -> Option<WindowSnapshot> {
     let h = HWND(hwnd as *mut _);
+    if IsIconic(h).as_bool() {
+        return None;
+    }
     let mut rc = RECT::default();
     GetClientRect(h, &mut rc).ok()?;
     let (w, hgt) = (rc.right - rc.left, rc.bottom - rc.top);
     if w <= 0 || hgt <= 0 {
-        return None;
-    }
-    let mut origin = POINT::default();
-    if !ClientToScreen(h, &mut origin).as_bool() {
         return None;
     }
 
@@ -108,32 +125,102 @@ unsafe fn grab(hwnd: isize) -> Option<WindowSnapshot> {
     };
 
     let old = SelectObject(pooled.mem.0, HGDIOBJ(pooled.bmp.0 .0));
-    SetStretchBltMode(pooled.mem.0, HALFTONE);
-    let drawn = StretchBlt(
-        pooled.mem.0,
-        0,
-        0,
-        tw,
-        th,
-        Some(screen.0),
-        origin.x,
-        origin.y,
-        w,
-        hgt,
-        SRCCOPY,
-    )
-    .as_bool();
+    // PrintWindow sends messages to the target thread, so a hung app would freeze the UI thread.
+    let mut bgra = if IsHungAppWindow(h).as_bool() {
+        None
+    } else if print_window(h, pooled.mem.0, w, hgt, tw, th) {
+        read_deselected(pooled.mem.0, pooled.bmp.0, old, tw, th).filter(|px| !is_flat(px))
+    } else {
+        None
+    };
+    // Screen pixels are only trusted for the window the user is looking at.
+    if bgra.is_none() && GetForegroundWindow() == h {
+        let mut origin = POINT::default();
+        if ClientToScreen(h, &mut origin).as_bool() {
+            SetStretchBltMode(pooled.mem.0, HALFTONE);
+            let drawn = StretchBlt(
+                pooled.mem.0,
+                0,
+                0,
+                tw,
+                th,
+                Some(screen.0),
+                origin.x,
+                origin.y,
+                w,
+                hgt,
+                SRCCOPY,
+            )
+            .as_bool();
+            if drawn {
+                bgra = read_deselected(pooled.mem.0, pooled.bmp.0, old, tw, th)
+                    .filter(|px| !is_flat(px));
+            }
+        }
+    }
     SelectObject(pooled.mem.0, old);
-    let bgra = drawn
-        .then(|| read_pixels(pooled.mem.0, pooled.bmp.0, tw, th))
-        .flatten();
+    let bgra = bgra?;
     POOL.with(|p| *p.borrow_mut() = Some(pooled));
 
     Some(WindowSnapshot {
         width: tw as u32,
         height: th as u32,
-        bgra: bgra?,
+        bgra,
     })
+}
+
+/// Reads the bitmap with it out of the DC first; `GetDIBits` refuses a selected bitmap.
+unsafe fn read_deselected(
+    mem: HDC,
+    bmp: HBITMAP,
+    old: HGDIOBJ,
+    width: i32,
+    height: i32,
+) -> Option<Vec<u8>> {
+    SelectObject(mem, old);
+    let pixels = read_pixels(mem, bmp, width, height);
+    SelectObject(mem, HGDIOBJ(bmp.0));
+    pixels
+}
+
+/// Draws the window itself into `mem` when the screen grab returns nothing usable.
+unsafe fn print_window(hwnd: HWND, mem: HDC, w: i32, hgt: i32, tw: i32, th: i32) -> bool {
+    let src = MemDc(CreateCompatibleDC(Some(mem)));
+    if src.0.is_invalid() {
+        return false;
+    }
+    let bmp = Bitmap(CreateCompatibleBitmap(mem, w, hgt));
+    if bmp.0.is_invalid() {
+        return false;
+    }
+    let old = SelectObject(src.0, HGDIOBJ(bmp.0 .0));
+    let printed = PrintWindow(hwnd, src.0, PW_CLIENTONLY | PW_RENDERFULLCONTENT) != 0;
+    SetStretchBltMode(mem, HALFTONE);
+    let drawn =
+        printed && StretchBlt(mem, 0, 0, tw, th, Some(src.0), 0, 0, w, hgt, SRCCOPY).as_bool();
+    SelectObject(src.0, old);
+    drawn
+}
+
+/// A frame of one repeated pixel means the grab caught nothing usable.
+fn is_flat(bgra: &[u8]) -> bool {
+    let Some((first, rest)) = bgra.as_chunks::<4>().0.split_first() else {
+        return true;
+    };
+    // Also treat very dark/empty frames as unusable to avoid black patches
+    let mut nonzero = 0;
+    for px in bgra.as_chunks::<4>().0 {
+        if px[0] != 0 || px[1] != 0 || px[2] != 0 {
+            nonzero += 1;
+            if nonzero > 16 {
+                break;
+            }
+        }
+    }
+    if nonzero <= 4 {
+        return true;
+    }
+    rest.iter().all(|px| px == first)
 }
 
 unsafe fn read_pixels(mem: HDC, bmp: HBITMAP, width: i32, height: i32) -> Option<Vec<u8>> {

@@ -1,9 +1,8 @@
-use ely_gpui_component::feedback::Toast;
-use ely_gpui_component::primitives::Severity;
+use ely_gpui_component::primitives::{IconName, Severity};
 use gpui::{RenderImage, SharedString};
 use std::sync::Arc;
-use std::time::Duration;
 
+use crate::core::keys::KeyAction;
 use crate::core::{GroupId, TabId, UpdateState};
 use crate::win::{IconPixels, WindowSnapshot};
 
@@ -42,9 +41,10 @@ pub enum Cmd {
     ToggleOverlay,
     SetTabMenu(bool),
     ToggleTabMenu,
-    AddWindow {
-        hwnd: isize,
+    MoveTabMenuCursor {
+        delta: isize,
     },
+    ConfirmTabMenuCursor,
     CloseOtherTabs {
         group: GroupId,
         tab: TabId,
@@ -62,6 +62,13 @@ pub enum Cmd {
         at: (f32, f32),
     },
     CloseTabMenu,
+    MoveContextMenuCursor {
+        delta: isize,
+    },
+    ConfirmContextMenuCursor,
+    CopyTabPath {
+        tab: TabId,
+    },
     BeginRename {
         group: GroupId,
         tab: TabId,
@@ -74,8 +81,20 @@ pub enum Cmd {
     },
     SetPickerOpen(bool),
     TogglePicker,
+    TogglePickerPick {
+        hwnd: isize,
+    },
+    MovePickerCursor {
+        delta: isize,
+    },
+    TogglePickerCursor,
+    AddPicked,
     SetSavedMenu(bool),
     ToggleSavedMenu,
+    MoveSavedMenuCursor {
+        delta: isize,
+    },
+    ConfirmSavedMenuCursor,
     BeginSaveSet,
     BeginRenameSet {
         id: u64,
@@ -94,9 +113,11 @@ pub enum Cmd {
     DeleteSet {
         id: u64,
     },
+    CopyDiagnostics,
     ToggleTabBadge,
     ToggleHoverPreview,
     ToggleTheme,
+    ToggleRestoreSession,
     SetTabColor {
         group: GroupId,
         tab: TabId,
@@ -110,11 +131,27 @@ pub enum Cmd {
         tab: TabId,
     },
     PreviewCardHover(bool),
+    DismissPreview,
     Shutdown,
     ToggleTabBar,
     OpenRepository,
-    CheckForUpdates,
+    CheckForUpdates {
+        force: bool,
+    },
+    ToggleUpdateChannel,
     OpenSlateFolder,
+    ReloadSettings,
+    OpenKeybinds,
+    CloseDialog,
+    BannerAction(BannerAction),
+    DismissBanner,
+    DismissUpdateBanner,
+    SetKeybindChord {
+        action: KeyAction,
+        chord: Option<crate::core::keys::Chord>,
+    },
+    ResetKeybinds,
+    CommitKeybinds,
 }
 
 #[derive(Clone)]
@@ -123,9 +160,33 @@ pub struct TabInfo {
     pub title: String,
     pub app: String,
     pub exe: String,
-    pub exe_path: String,
     pub icon: Option<Arc<RenderImage>>,
     pub accent: Option<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BannerAction {
+    InstallUpdate,
+    RetryUpdateCheck,
+    RestartUpdate,
+}
+
+/// What a banner says, and which surface renders it.
+#[derive(Clone, Debug)]
+pub enum BannerKind {
+    Message {
+        severity: Severity,
+        text: SharedString,
+        action: Option<(SharedString, BannerAction)>,
+    },
+    /// The window picker is armed; cleared when it ends.
+    Pick,
+}
+
+#[derive(Clone, Debug)]
+pub struct BannerView {
+    pub id: u64,
+    pub kind: BannerKind,
 }
 
 #[derive(Clone)]
@@ -136,28 +197,74 @@ pub struct HostInfo {
     pub icons_in_tabs: bool,
     pub show_tab_badge: bool,
     pub hover_preview_enabled: bool,
+    pub theme: SharedString,
+    pub restore_session: bool,
     pub overlay: bool,
     pub tab_menu_open: bool,
+    pub tab_menu_cursor: Option<usize>,
     pub picker_open: bool,
     pub picker_rows: Vec<PickerRow>,
+    pub picker_picks: Vec<isize>,
+    pub picker_cursor: Option<usize>,
     pub saved_menu_open: bool,
     pub saved_sets: Vec<SavedSetInfo>,
     pub saved_prompt: Option<SavedPrompt>,
     pub tab_menu: Option<TabMenu>,
-    pub renaming: Option<TabId>,
+    /// Rows of the tab context menu, in render order; the cursor indexes this list.
+    pub ctx_menu_items: Vec<ContextMenuItem>,
+    pub ctx_menu_cursor: Option<usize>,
+    pub saved_menu_cursor: Option<usize>,
+    pub renaming: Option<(GroupId, TabId)>,
     pub picking: bool,
     pub hover_preview: Option<HoverPreview>,
     pub show_tab_bar: bool,
     pub update: UpdateState,
+    /// Set when the user dismissed the update banner for this version.
+    pub update_banner_hidden: Option<String>,
+    pub banner: Option<BannerView>,
+    pub keybind_error: Option<SharedString>,
+    pub dialog: Option<Dialog>,
+    pub keybinds: crate::config::Keybinds,
     pub caption: SharedString,
     pub version_label: SharedString,
     pub update_label: SharedString,
+    pub beta_channel: bool,
+}
+
+impl HostInfo {
+    /// True when anything above the tab strip is showing, so the empty state must not draw.
+    pub fn overlaying(&self) -> bool {
+        self.overlay
+            || self.dialog.is_some()
+            || self.tab_menu_open
+            || self.picker_open
+            || self.saved_menu_open
+            || self.tab_menu.is_some()
+            || self.renaming.is_some()
+            || self.saved_prompt.is_some()
+            || self.hover_preview.is_some()
+    }
 }
 
 #[derive(Clone)]
 pub struct TabMenu {
     pub tab: TabId,
     pub at: (f32, f32),
+}
+
+/// One row of a tab's context menu, built by the controller so the keyboard cursor and the
+/// painted rows can never drift apart.
+#[derive(Clone)]
+pub struct ContextMenuItem {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub desc: Option<&'static str>,
+    pub icon: IconName,
+    pub enabled: bool,
+    pub danger: bool,
+    /// Draw a divider above this row.
+    pub starts_group: bool,
+    pub cmd: Cmd,
 }
 
 #[derive(Clone)]
@@ -177,6 +284,11 @@ pub struct SavedSetInfo {
     pub total: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dialog {
+    Keybinds,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SavedPrompt {
     Save,
@@ -190,22 +302,16 @@ pub struct HoverPreview {
     pub image: Option<Arc<RenderImage>>,
 }
 
-pub(super) fn pick_toast() -> Toast {
-    Toast::new("Add a window")
-        .severity(Severity::Info)
-        .body("Hover a window - press TAB to add - Esc to cancel")
-        .stay(Some(Duration::from_secs(4)))
-}
-
-pub(super) fn update_toast(
-    title: &'static str,
+pub(super) fn banner_message(
     severity: Severity,
-    body: impl Into<SharedString>,
-) -> Toast {
-    Toast::new(title)
-        .severity(severity)
-        .body(body)
-        .stay(Some(Duration::from_secs(5)))
+    text: impl Into<SharedString>,
+    action: Option<(SharedString, BannerAction)>,
+) -> BannerKind {
+    BannerKind::Message {
+        severity,
+        text: text.into(),
+        action,
+    }
 }
 
 pub(super) fn app_name(exe_name: &str) -> String {
@@ -221,6 +327,7 @@ pub(super) fn app_name(exe_name: &str) -> String {
     }
 }
 
+/// Windows hands back BGRA, which is exactly what `RenderImage` wants, so no swap here.
 pub(super) fn render_image(px: IconPixels) -> Option<Arc<RenderImage>> {
     let buffer = image::RgbaImage::from_raw(px.width, px.height, px.bgra)?;
     Some(crate::ui::render_image(buffer))

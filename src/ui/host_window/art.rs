@@ -7,6 +7,8 @@ use gpui::{
     div, px, AnyElement, App, Div, FontWeight, ParentElement, RenderImage, SharedString, Styled,
 };
 
+use crate::ui::metrics::{EMPTY_MARK, EMPTY_MARK_OPACITY, KEY_CAP_MIN_W_RATIO};
+
 pub(super) fn grayscale_mark() -> Option<Arc<RenderImage>> {
     const PNG: &[u8] = include_bytes!(env!("SLATE_LOGO"));
     let mut rgba = image::load_from_memory(PNG).ok()?.to_rgba8();
@@ -21,7 +23,7 @@ pub(super) fn grayscale_mark() -> Option<Arc<RenderImage>> {
 pub(super) fn key_cap(label: impl Into<SharedString>, cx: &App) -> Div {
     let theme = cx.theme();
     div()
-        .min_w(theme.text_size(TextSize::Xs) * 1.8)
+        .min_w(theme.text_size(TextSize::Xs) * KEY_CAP_MIN_W_RATIO)
         .px_1()
         .flex()
         .justify_center()
@@ -52,9 +54,9 @@ pub(super) fn empty_state(
         .when_some(icon, |empty, icon| {
             empty.child(
                 Image::new("empty-mark", icon)
-                    .w(px(128.0))
-                    .h(px(128.0))
-                    .opacity(0.18),
+                    .w(px(EMPTY_MARK))
+                    .h(px(EMPTY_MARK))
+                    .opacity(EMPTY_MARK_OPACITY),
             )
         })
         .child(caption)

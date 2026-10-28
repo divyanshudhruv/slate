@@ -5,6 +5,7 @@ mod config;
 mod core;
 #[cfg(windows)]
 mod logging;
+mod timings;
 #[cfg(windows)]
 mod win;
 
@@ -29,6 +30,11 @@ fn main() {
         win::janitor::run(std::path::PathBuf::from(path), pid);
         return;
     }
+    // The janitor helper must not install the global keyboard hook.
+    win::keys::install();
+    if let Some(code) = controller::startup() {
+        std::process::exit(code);
+    }
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut gpui::App| {
@@ -49,13 +55,13 @@ fn main() {
                 window_min_size: Some(size(px(640.0), px(420.0))),
                 ..Default::default()
             };
+            let host_controller = controller.clone();
             if let Err(err) = cx.open_window(options, move |_window, cx| {
-                cx.new(|cx| ui::HostWindow::new(controller, cx))
+                cx.new(|cx| ui::HostWindow::new(host_controller, cx))
             }) {
                 eprintln!("Slate: host window failed to open: {err:?}");
                 std::process::exit(1);
             }
-
             cx.activate(true);
         });
 }

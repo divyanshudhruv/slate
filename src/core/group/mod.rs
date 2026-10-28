@@ -70,12 +70,10 @@ impl GroupSet {
     }
 
     pub fn create_group(&mut self, windows: Vec<WindowIdentity>) -> GroupId {
-        let id = GroupId(self.next_group);
-        self.next_group += 1;
+        let id = GroupId(crate::core::take_id(&mut self.next_group));
         let mut tabs = Vec::new();
         for w in windows {
-            let tid = TabId(self.next_tab);
-            self.next_tab += 1;
+            let tid = TabId(crate::core::take_id(&mut self.next_tab));
             tabs.push(Tab { id: tid, window: w });
         }
         let active = tabs.first().map(|t| t.id);
@@ -91,8 +89,7 @@ impl GroupSet {
         if self.group(id).is_none() {
             return Effect::Noop;
         }
-        let tid = TabId(self.next_tab);
-        self.next_tab += 1;
+        let tid = TabId(crate::core::take_id(&mut self.next_tab));
         let Some(g) = self.group_mut(id) else {
             return Effect::Noop;
         };

@@ -163,3 +163,48 @@ fn set_active_rejects_unknown_tab() {
     let other = s2.group(g2).unwrap().tabs[1].id;
     assert_eq!(s2.set_active(g2, other), Effect::Applied);
 }
+
+#[test]
+fn remove_tab_bumps_the_generation() {
+    let mut s = GroupSet::new();
+    let g = s.create_group(vec![win(100, "a.exe", "A"), win(200, "b.exe", "B")]);
+    let before = s.generation();
+    assert_eq!(s.remove_tab(g, TabId(999)), Effect::Noop);
+    assert_eq!(
+        s.generation(),
+        before,
+        "a noop must not invalidate the index"
+    );
+
+    let tab = s.group(g).unwrap().tabs[0].id;
+    assert_eq!(s.remove_tab(g, tab), Effect::Applied);
+    assert!(s.generation() > before);
+}
+
+#[test]
+fn reorder_bumps_the_generation() {
+    let mut s = GroupSet::new();
+    let g = s.create_group(vec![win(100, "a.exe", "A"), win(200, "b.exe", "B")]);
+    let before = s.generation();
+    assert_eq!(s.reorder(GroupId(404), TabId(0), 1), Effect::Noop);
+    assert_eq!(s.generation(), before);
+
+    let tab = s.group(g).unwrap().tabs[0].id;
+    assert_eq!(s.reorder(g, tab, 1), Effect::Applied);
+    assert!(s.generation() > before);
+}
+
+#[test]
+fn ids_start_at_zero_and_move_on() {
+    let mut s = GroupSet::new();
+    let g = s.create_group(vec![]);
+    assert_eq!(g, GroupId(0));
+    let first = s.add_window(g, win(100, "a.exe", "A"));
+    assert_eq!(first, Effect::Applied);
+    let tab = s.group(g).unwrap().tabs[0].id;
+    assert_eq!(tab, TabId(0));
+
+    let g2 = s.create_group(vec![win(200, "b.exe", "B")]);
+    assert_eq!(g2, GroupId(1));
+    assert_eq!(s.group(g2).unwrap().tabs[0].id, TabId(1));
+}

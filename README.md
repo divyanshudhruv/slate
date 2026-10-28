@@ -1,4 +1,5 @@
-<img alt="banner" src="./assets/readme/banner.png" />
+<img alt="footer banner" src="./assets/readme/footer-banner.png" />
+<img alt="banner" src="./assets/readme/header-banner.png" />
 
 <p align="center">
 <code>Slate</code> brings browser-style tabs to every Windows app. Your open windows become tabs in a <code>single</code> window, and you switch, add, or detach them with <code>Ctrl</code>+<code>Tab</code> and a <code>drag</code>.
@@ -6,7 +7,7 @@
 
 <div align="center">
 
-[![CI](https://img.shields.io/github/actions/workflow/status/divyanshudhruv/slate/ci.yml?label=ci&style=flat-square)](https://github.com/divyanshudhruv/slate/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/divyanshudhruv/slate/ci.yml?branch=development&label=ci&style=flat-square)](https://github.com/divyanshudhruv/slate/actions/workflows/ci.yml)
 [![Deny](https://img.shields.io/github/actions/workflow/status/divyanshudhruv/slate/deny.yml?label=deny&style=flat-square)](https://github.com/divyanshudhruv/slate/actions/workflows/deny.yml)
 [![Release](https://img.shields.io/github/v/release/divyanshudhruv/slate?sort=semver&style=flat-square)](https://github.com/divyanshudhruv/slate/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/divyanshudhruv/slate/total?style=flat-square)](https://github.com/divyanshudhruv/slate/releases)
@@ -30,29 +31,36 @@
 - [Build from source](#build-from-source)
 - [Usage](#usage)
 - [Files and data](#files-and-data)
+- [Migration](MIGRATION.md)
 - [Limitations](#limitations)
 - [Star History](#star-history)
 - [License](#license)
 
 ## Features
 
-**`1. Any window as a tab`** - add one from the `+` picker, Ctrl-drag a window onto the host, or hover it in pick mode and press `TAB`
+**`1. Any window as a tab`** - use the `+` picker, Ctrl-drag a window onto the host, or hover it and press `TAB`
 
-**`2. Drag out to detach`** - drag a tab off the strip to send its window back to the desktop at the drop point, across monitors
+**`2. Drag out to detach`** - drag a tab off the strip to drop its window back on the desktop, across monitors
 
-**`3. Per-tab accents`** - color-code tabs by hue from the tab menu; colors are saved with tab sets
+**`3. Per-tab accents`** - color-code tabs from the tab menu; colors are saved with sets
 
-**`4. Saved sets`** - snapshot the open tabs as a named set and restore it later. Save overwrites an existing set with the same name; restoring only re-hosts windows that are already running
+**`4. Saved sets`** - save the open tabs as a named set and restore it later (running windows only)
 
 **`5. Hover preview`** - rest on a tab for a live snapshot of its window
 
-**`6. Global shortcuts`** - `Ctrl`+`Tab`, `Ctrl`+`Shift`+`Tab`, `Ctrl`+`1..9` and `Ctrl`+`W` keep working while a hosted window has focus
+**`6. Global shortcuts`** - `Ctrl`+`Tab`, `Ctrl`+`Shift`+`Tab`, `Ctrl`+`1..9` and `Ctrl`+`W` work while a hosted window has focus
 
 **`7. Tray icon`** - restore the host or exit from the notification area
 
-**`8. Self-updating`** - **Check for updates** downloads and installs updates in-app with mandatory SHA256 checksum verification. Updates are swapped into the installed location with automatic rollback support.
+**`8. Self-updating`** - in-app updates with mandatory SHA256 verification and automatic rollback
 
-**`9. Light and dark themes`** - following the system by default
+**`9. Light and dark themes`** - the theme button cycles system, dark, and light
+
+**`10. Search and multi-add`** - the `+` picker filters by name and adds several at once; `Enter` adds, `Esc` closes
+
+**`11. Session restore`** - reopen last time's tabs on launch (toggle in the Slate menu)
+
+**`12. Sets match windows, not titles`** - exact title first, then process and placement, so retitled windows still return
 
 ## Gallery
 
@@ -160,6 +168,8 @@ download, compare it against the published `SHA256SUMS`:
 Get-FileHash .\slate-vX.Y.Z-x64.exe -Algorithm SHA256  # match the file you downloaded
 ```
 
+Upgrading from an older build? See [MIGRATION.md](MIGRATION.md).
+
 ## Build from source
 
 You need Rust with the MSVC target and the Windows SDK. The exact toolchain
@@ -186,6 +196,8 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `Ctrl+W`                         | Return the active tab's window to the desktop |
 | Ctrl-drag a window onto the host | Add it as a tab                               |
 | Hover a window, then `TAB`       | Add it as a tab (pick mode)                   |
+| `Up` / `Down` in a menu          | Move the highlighted row                      |
+| `Enter` in a menu                | Run the highlighted row                       |
 | `Esc`                            | Cancel pick mode or dismiss a menu            |
 
 ## Files and data
@@ -194,15 +206,24 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | ---- | ------- |
 | `%LOCALAPPDATA%\Programs\Burntfern\Slate\` | Install directory (contains `slate.exe`) |
 | `%LOCALAPPDATA%\Burntfern\Slate\` | Data directory |
-| `%LOCALAPPDATA%\Burntfern\Slate\config.json` | Theme and accent |
-| `%LOCALAPPDATA%\Burntfern\Slate\settings.json` | Tab, preview, and shortcut settings |
+| `%LOCALAPPDATA%\Burntfern\Slate\settings.json` | Theme, accent, tab, preview, and shortcut settings |
 | `%LOCALAPPDATA%\Burntfern\Slate\sets.json` | Saved tab sets |
+| `%LOCALAPPDATA%\Burntfern\Slate\session.json` | Tabs restored on the next launch |
 | `%LOCALAPPDATA%\Burntfern\Slate\install.json` | Registered copy (path, version, pid) used by updates and single-instance checks |
-| `%LOCALAPPDATA%\Burntfern\Slate\slate.log` | Logs |
+| `%LOCALAPPDATA%\Burntfern\Slate\instance.pid` | Pid of the copy that owns this data folder |
+| `%LOCALAPPDATA%\Burntfern\Slate\update-pending.json` | Written before a swap, cleared on the first frame; a build that never starts is rolled back |
+| `%LOCALAPPDATA%\Burntfern\Slate\janitor.key` | DPAPI-protected key that signs the janitor payload |
+| `%LOCALAPPDATA%\Burntfern\Slate\janitor-<pid>.bin` | Windows a dead Slate owned, replayed on the next launch |
+| `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
 | `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap helper |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |
+| `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Slate.lnk` | Start menu shortcut to the installed copy |
 
-On first run, Slate migrates from `%USERPROFILE%\.burntfern\` automatically with a backup of the old folder. Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe to store everything alongside it.
+Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe
+to keep settings, sets, session, updates, and logs in `data\` beside it.
+
+Coming from the old `%USERPROFILE%\.burntfern\` layout? It is migrated
+automatically on first run - see [MIGRATION.md](MIGRATION.md).
 
 ## Limitations
 
@@ -210,15 +231,19 @@ On first run, Slate migrates from `%USERPROFILE%\.burntfern\` automatically with
 control, and GDI icon extraction.
 
 **`2. Owned windows draw above the host`** - While a Slate menu or dialog is
-open, it covers the active member. Tooltips and toasts that overlap a hosted
-window have the same problem.
+open, it covers the active member. Tooltips and other overlays that reach
+outside the title bar have the same problem.
+
+**`3. Accent is config-file only`** - the accent hue lives in `settings.json`.
+Change it there, then pick **Reload settings** in the Slate menu; there is no
+accent picker in the UI.
 
 ## Star History
 
 <a href="https://www.star-history.com/?repos=divyanshudhruv%2Fslate&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&theme=light&legend=top-left" />
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&legend=top-left" />
  </picture>
 </a>

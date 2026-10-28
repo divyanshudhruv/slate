@@ -1,10 +1,9 @@
 use gpui::Context;
-use std::time::Duration;
 
-use super::dto::pick_toast;
+use super::dto::BannerKind;
 use super::Controller;
 use crate::win::{
-    content_rect_screen, ctrl_held, enumerate_windows, is_blacklisted, window_rect,
+    content_rect_screen, ctrl_held, enumerate_windows, is_blacklisted, slate_elevated, window_rect,
     window_under_cursor, Highlight, KeyboardCapture, PickKey,
 };
 
@@ -17,14 +16,12 @@ impl Controller {
         if self.highlight.is_none() {
             self.highlight = Highlight::new();
         }
-        self.toaster.update(cx, |toaster, cx| {
-            toaster.push(pick_toast(), cx);
-        });
+        self.show_banner(BannerKind::Pick, None, cx);
         self.pick_gen = self.pick_gen.wrapping_add(1);
         let generation = self.pick_gen;
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
-                .timer(Duration::from_millis(40))
+                .timer(crate::timings::PICK_POLL)
                 .await;
             let done = this
                 .update(cx, |controller, cx| controller.poll_pick(generation, cx))
@@ -83,7 +80,7 @@ impl Controller {
         self.windows
             .iter()
             .find(|w| w.hwnd == hwnd)
-            .is_some_and(|w| !is_blacklisted(&w.class) && !w.elevated)
+            .is_some_and(|w| !is_blacklisted(&w.class) && (!w.elevated || slate_elevated()))
     }
 
     fn drag_target_ok(&self, hwnd: isize) -> bool {
@@ -150,5 +147,12 @@ impl Controller {
             highlight.hide();
         }
         self.pick_gen = self.pick_gen.wrapping_add(1);
+        if matches!(
+            self.updater.banner.as_ref().map(|banner| &banner.kind),
+            Some(BannerKind::Pick)
+        ) {
+            self.updater.banner = None;
+        }
+        self.invalidate_info();
     }
 }

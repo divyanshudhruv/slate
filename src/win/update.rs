@@ -6,12 +6,14 @@ use std::process::Command;
 
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::config;
 use crate::core::install;
-use crate::core::update::{self, parse_release_tag, LATEST_API_URL};
+use crate::core::update::{
+    self, assets_ready, parse_release, parse_releases, pick_release, Channel,
+};
 
 fn http_client() -> Result<Client, String> {
     Client::builder()
@@ -19,6 +21,103 @@ fn http_client() -> Result<Client, String> {
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|err| format!("http client: {err}"))
+}
+
+fn marker_path() -> PathBuf {
+    config::paths::data_dir().join(install::UPDATE_MARKER)
+}
+
+/// Records that a swapped-in build has not proven itself yet, so the next start can roll back.
+fn mark_pending(version: &str) {
+    let marker = serde_json::json!({ "version": version, "attempts": 0 });
+    let path = marker_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(err) = fs::write(&path, marker.to_string()) {
+        error!("could not write update marker: {err}");
+    }
+}
+
+/// Clears the marker and drops the pre-update copy; only for a build that proved itself.
+pub fn clear_update_marker() {
+    clear_marker_only();
+    // The new build reached its first frame, so the previous copy is no longer needed.
+    let canonical = config::canonical_exe_path();
+    let _ = fs::remove_file(install::backup_path(&canonical));
+}
+
+/// Clears the marker but keeps the backup, so a failed rollback can still be retried.
+fn clear_marker_only() {
+    let path = marker_path();
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn read_marker_attempts() -> Option<u32> {
+    let text = fs::read_to_string(marker_path()).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Some(value.get("attempts").and_then(|a| a.as_u64()).unwrap_or(0) as u32)
+}
+
+fn write_marker_attempts(attempts: u32) {
+    let path = marker_path();
+    let version = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| crate::core::update::CURRENT_VERSION.to_string());
+    let marker = serde_json::json!({ "version": version, "attempts": attempts });
+    let _ = fs::write(&path, marker.to_string());
+}
+
+/// Runs before any UI work: a build that never reached its first frame is replaced by the backup.
+pub fn recover_interrupted_update() -> Option<i32> {
+    match install::launch_guard(read_marker_attempts()) {
+        install::LaunchGuard::Clear => None,
+        install::LaunchGuard::FirstStart => {
+            write_marker_attempts(1);
+            None
+        }
+        install::LaunchGuard::Rollback => {
+            info!("the last update never started; rolling back");
+            let canonical = config::canonical_exe_path();
+            let backup = install::backup_path(&canonical);
+            if !backup.exists() {
+                error!("no backup to roll back to; keeping the current build");
+                clear_marker_only();
+                return None;
+            }
+            let failed = canonical.with_file_name(install::FAILED_NAME);
+            let _ = fs::remove_file(&failed);
+            if let Err(err) = fs::rename(&canonical, &failed) {
+                error!("could not set the failed build aside: {err}");
+                clear_marker_only();
+                return None;
+            }
+            if let Err(err) = fs::rename(&backup, &canonical) {
+                error!("could not put the backup back: {err}");
+                let _ = fs::rename(&failed, &canonical);
+                clear_marker_only();
+                return None;
+            }
+            clear_update_marker();
+            info!("rolled back to the previous build, relaunching");
+            if let Err(err) = Command::new(&canonical)
+                .creation_flags(CREATE_NO_WINDOW.0)
+                .spawn()
+            {
+                error!("could not relaunch the restored build: {err}");
+            }
+            Some(0)
+        }
+    }
 }
 
 pub fn bootstrap(source: &str) -> Result<(), String> {
@@ -47,18 +146,68 @@ pub fn bootstrap(source: &str) -> Result<(), String> {
         ));
     }
     let backup = install::backup_path(&canonical);
-    if install::needs_backup(canonical.exists(), backup.exists()) {
-        fs::rename(&canonical, &backup).map_err(|err| format!("backup: {err}"))?;
+    let had_backup = backup.exists();
+    if install::needs_backup(canonical.exists(), had_backup) {
+        if let Err(err) = fs::rename(&canonical, &backup) {
+            return Err(format!("backup: {err}"));
+        }
     }
-    fs::rename(&staged, &canonical).map_err(|err| format!("publish: {err}"))?;
+    if let Err(err) = fs::rename(&staged, &canonical) {
+        restore_backup(&backup, &canonical);
+        return Err(format!("publish: {err}"));
+    }
     if !config::save_install(&config::InstallRecord {
         path: canonical.to_string_lossy().into_owned(),
         version: version.clone(),
         pid: std::process::id(),
     }) {
+        restore_backup(&backup, &canonical);
         return Err("failed to write install record".to_string());
     }
+    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
+        warn!("start menu shortcut: {err}");
+    }
     info!("bootstrap complete version {version}");
+    Ok(())
+}
+
+/// Puts the previous exe back when a publish step fails midway.
+fn restore_backup(backup: &Path, canonical: &Path) {
+    if !backup.exists() {
+        return;
+    }
+    let _ = fs::remove_file(canonical);
+    if let Err(err) = fs::rename(backup, canonical) {
+        error!("rollback failed: {err}");
+    }
+}
+
+/// Copies a pre-0.5 install into the install dir, then relaunches it there.
+pub fn relocate(source: &str) -> Result<(), String> {
+    info!("relocating install from {source}");
+    let canonical = config::canonical_exe_path();
+    let Some(parent) = canonical.parent() else {
+        return Err("install dir has no parent".to_string());
+    };
+    fs::create_dir_all(parent).map_err(|err| format!("install dir: {err}"))?;
+    if !canonical.exists() {
+        fs::copy(source, &canonical).map_err(|err| format!("copy exe: {err}"))?;
+    }
+    if !config::save_install(&config::InstallRecord {
+        path: canonical.to_string_lossy().into_owned(),
+        version: crate::core::update::CURRENT_VERSION.to_string(),
+        pid: 0,
+    }) {
+        return Err("failed to write install record".to_string());
+    }
+    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
+        warn!("start menu shortcut: {err}");
+    }
+    Command::new(&canonical)
+        .creation_flags(CREATE_NO_WINDOW.0)
+        .spawn()
+        .map_err(|err| format!("launch: {err}"))?;
+    info!("relaunched from {}", canonical.display());
     Ok(())
 }
 
@@ -70,6 +219,7 @@ pub fn refresh_install_from(candidate: &str) -> Result<(), String> {
     let canonical = config::canonical_exe_path();
     let downloaded = download_release(&version)?;
     let pid = std::process::id();
+    mark_pending(&version);
     spawn_swap_helper(pid, &canonical, &downloaded)?;
     if !config::save_install(&config::InstallRecord {
         path: canonical.to_string_lossy().into_owned(),
@@ -82,10 +232,10 @@ pub fn refresh_install_from(candidate: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn fetch_latest() -> Result<String, String> {
+pub fn fetch_latest(channel: Channel) -> Result<String, String> {
     let client = http_client()?;
     let res = client
-        .get(LATEST_API_URL)
+        .get(channel.api_url())
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "slate-update-check")
         .send()
@@ -100,7 +250,12 @@ pub fn fetch_latest() -> Result<String, String> {
         })?;
     let status = res.status();
     if status.as_u16() == 403 || status.as_u16() == 429 {
-        return Err("GitHub is rate-limiting update checks (60/hour) - try later".to_string());
+        let reset = res
+            .headers()
+            .get("x-ratelimit-reset")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i64>().ok());
+        return Err(rate_limit_message(reset, chrono_now()));
     }
     if status.as_u16() == 404 {
         return Err("No releases published yet".to_string());
@@ -109,7 +264,42 @@ pub fn fetch_latest() -> Result<String, String> {
         return Err(format!("GitHub returned HTTP {}", status.as_u16()));
     }
     let body = res.text().map_err(|err| format!("read body: {err}"))?;
-    parse_release_tag(&body).ok_or_else(|| "no release tag in response".to_string())
+    let release = match channel {
+        Channel::Stable => {
+            parse_release(&body).ok_or_else(|| "no release tag in response".to_string())?
+        }
+        Channel::Beta => {
+            return pick_release(parse_releases(&body), asset_arch())
+                .map(|release| release.version)
+                .ok_or_else(|| "No beta release with downloads yet".to_string())
+        }
+    };
+    // release-please publishes the release before the build workflow uploads assets, so a bare tag must not count as an installable update.
+    if !assets_ready(&release, asset_arch()) {
+        return Err(format!(
+            "v{} is out, but its download is not uploaded yet - try again soon",
+            release.version
+        ));
+    }
+    Ok(release.version)
+}
+
+/// Turns GitHub's reset timestamp into a wait the user can act on.
+fn rate_limit_message(reset: Option<i64>, now: i64) -> String {
+    match reset.map(|at| (at - now) / 60) {
+        Some(wait) if wait > 0 => {
+            format!("GitHub is rate-limiting update checks - try again in about {wait} min")
+        }
+        Some(_) => "GitHub is rate-limiting update checks - try again shortly".to_string(),
+        None => "GitHub is rate-limiting update checks (60/hour) - try later".to_string(),
+    }
+}
+
+fn chrono_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 pub fn asset_arch() -> &'static str {
@@ -120,6 +310,14 @@ pub fn asset_arch() -> &'static str {
 }
 
 pub fn download_release(version: &str) -> Result<PathBuf, String> {
+    download_release_with_progress(version, |_| {})
+}
+
+/// Same as `download_release`, but reports how much of the asset has arrived, 0 to 100.
+pub fn download_release_with_progress(
+    version: &str,
+    mut progress: impl FnMut(u8),
+) -> Result<PathBuf, String> {
     info!("downloading release v{version}");
     let arch = asset_arch();
     let asset = update::asset_name(version, arch);
@@ -149,13 +347,53 @@ pub fn download_release(version: &str) -> Result<PathBuf, String> {
         let _ = fs::remove_file(&dest);
         return Err(format!("Network error {}", res.status().as_u16()));
     }
+    let total = res.content_length().unwrap_or(0);
     let mut file = fs::File::create(&dest).map_err(|err| format!("create file: {err}"))?;
-    res.copy_to(&mut file)
-        .map_err(|err| format!("download: {err}"))?;
+    let mut buf = [0u8; 64 * 1024];
+    let mut received: u64 = 0;
+    let mut reported: u8 = u8::MAX;
+    loop {
+        let read = match res.read(&mut buf) {
+            Ok(read) => read,
+            Err(err) => {
+                let _ = fs::remove_file(&dest);
+                return Err(format!("download: {err}"));
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        if let Err(err) = file.write_all(&buf[..read]) {
+            let _ = fs::remove_file(&dest);
+            return Err(format!("write file: {err}"));
+        }
+        received += read as u64;
+        if let Some(percent) = (received.saturating_mul(100))
+            .checked_div(total)
+            .map(|value| value.min(100) as u8)
+        {
+            if percent != reported {
+                reported = percent;
+                progress(percent);
+            }
+        }
+    }
+    progress(100);
     let _ = file.flush();
-    let sums = fetch_sums(version)?;
-    let expected = install::checksum_for(&sums, &asset)
-        .ok_or_else(|| format!("missing checksum for {asset} in SHA256SUMS"))?;
+    let sums = match fetch_sums(version) {
+        Ok(sums) => sums,
+        Err(err) => {
+            let _ = fs::remove_file(&dest);
+            return Err(err);
+        }
+    };
+    let expected = match install::checksum_for(&sums, &asset) {
+        Some(expected) => expected,
+        None => {
+            let _ = fs::remove_file(&dest);
+            return Err(format!("missing checksum for {asset} in SHA256SUMS"));
+        }
+    };
     let actual = file_hash(&dest)?;
     if actual != expected {
         let _ = fs::remove_file(&dest);
@@ -185,7 +423,8 @@ fn fetch_sums(version: &str) -> Result<String, String> {
             res.status().as_u16()
         ));
     }
-    res.text().map_err(|err| format!("read sums: {err}"))
+    let sums = res.text().map_err(|err| format!("read sums: {err}"))?;
+    Ok(sums)
 }
 
 fn file_hash(path: &Path) -> Result<String, String> {
@@ -205,13 +444,26 @@ fn file_hash(path: &Path) -> Result<String, String> {
     Ok(hex::encode(result))
 }
 
+fn cmd_exe() -> std::path::PathBuf {
+    let shell = std::env::var_os("SystemRoot")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("C:\\Windows"))
+        .join("System32")
+        .join("cmd.exe");
+    if shell.is_file() {
+        return shell;
+    }
+    std::env::var_os("ComSpec")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("cmd.exe"))
+}
+
 pub fn spawn_swap_helper(pid: u32, target: &Path, staged: &Path) -> Result<(), String> {
     let dir = config::staging_updates_dir();
     let name = swap_helper_name(pid);
     std::fs::write(dir.join(&name), helper_script(pid, target, staged))
         .map_err(|err| format!("helper: {err}"))?;
-    let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
-    Command::new(comspec)
+    Command::new(cmd_exe())
         .current_dir(&dir)
         .args(["/c"])
         .arg(&name)
@@ -234,6 +486,7 @@ fn helper_script(pid: u32, target: &Path, staged: &Path) -> String {
     let staged = batch_arg(staged);
     let target = batch_arg(target);
     let backup = batch_arg(&backup);
+    let tries = crate::timings::SWAP_WAIT_SECS;
     format!(
         "@echo off\r\n\
          setlocal DisableDelayedExpansion\r\n\
@@ -242,8 +495,8 @@ fn helper_script(pid: u32, target: &Path, staged: &Path) -> String {
          tasklist /fi \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\r\n\
          if errorlevel 1 goto swap\r\n\
          set /a n+=1\r\n\
-         if %n% geq 600 goto swap\r\n\
-         ping -n 2 127.0.0.1 >nul\r\n\
+         if %n% geq {tries} goto swap\r\n\
+         timeout /t 1 /nobreak >nul 2>&1 || ping -n 2 127.0.0.1 >nul\r\n\
          goto wait\r\n\
          :swap\r\n\
          if not exist {staged} goto launch\r\n\
@@ -262,53 +515,13 @@ fn helper_script(pid: u32, target: &Path, staged: &Path) -> String {
         staged = staged,
         target = target,
         backup = backup,
+        tries = tries,
     )
-}
-
-#[cfg(test)]
-fn split_status(text: &str) -> (&str, &str) {
-    match text.rsplit_once('\n') {
-        Some((body, status)) => (body, status.trim()),
-        None => (text, ""),
-    }
-}
-
-#[cfg(test)]
-fn status_error(status: &str) -> Option<String> {
-    match status {
-        "200" => None,
-        "403" | "429" => {
-            Some("GitHub is rate-limiting update checks (60/hour) - try later".to_string())
-        }
-        "404" => Some("No releases published yet".to_string()),
-        "" | "000" => Some("No response from GitHub".to_string()),
-        other => Some(format!("GitHub returned HTTP {other}")),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn status_is_the_last_line() {
-        let (body, status) = split_status("{\"tag_name\":\"v1.2.3\"}\n200");
-        assert_eq!(body, "{\"tag_name\":\"v1.2.3\"}");
-        assert_eq!(status, "200");
-
-        let (body, status) = split_status("\n403");
-        assert_eq!(body, "");
-        assert_eq!(status, "403");
-    }
-
-    #[test]
-    fn http_errors_name_the_reason() {
-        assert!(status_error("200").is_none());
-        assert!(status_error("403").unwrap().contains("60/hour"));
-        assert!(status_error("429").unwrap().contains("rate-limit"));
-        assert_eq!(status_error("500").unwrap(), "GitHub returned HTTP 500");
-        assert!(status_error("").unwrap().contains("No response"));
-    }
 
     const TARGET: &str = "C:\\Users\\a\\.burntfern\\slate\\slate.exe";
     const STAGED: &str = "C:\\Users\\a\\.burntfern\\slate\\updates\\slate-update-v0.2.0-x64.exe";
@@ -324,8 +537,19 @@ mod tests {
         assert!(script.contains("if errorlevel 1 goto swap"));
         assert!(script.contains("start \"\" \"C:\\apps\\slate.exe\""));
         assert!(script.contains("del \"%~f0\""));
-        assert!(!script.contains("timeout"));
-        assert!(script.contains("ping -n 2 127.0.0.1"));
+        assert!(script.contains(&format!(
+            "if %n% geq {} goto swap",
+            crate::timings::SWAP_WAIT_SECS
+        )));
+        assert!(script.contains("timeout /t 1 /nobreak"));
+    }
+
+    #[test]
+    fn rate_limit_waits_for_the_reset_header() {
+        assert!(rate_limit_message(Some(1_000 + 1_200), 1_000).contains("20 min"));
+        assert!(rate_limit_message(Some(1_000 + 30), 1_000).contains("shortly"));
+        assert!(rate_limit_message(Some(900), 1_000).contains("shortly"));
+        assert!(rate_limit_message(None, 1_000).contains("60/hour"));
     }
 
     #[test]

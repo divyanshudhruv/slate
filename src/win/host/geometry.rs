@@ -49,6 +49,14 @@ pub(super) fn member_insets(mh: HWND) -> Option<(i32, i32, i32, i32)> {
     }
 }
 
+/// The size and inset a member's region was last built for.
+type RegionKey = (isize, i32, i32, i32, i32, i32, i32);
+
+thread_local! {
+    /// Last region applied per member, so a reposition at the same size reuses it.
+    static LAST_REGION: std::cell::Cell<Option<RegionKey>> = const { std::cell::Cell::new(None) };
+}
+
 pub(super) fn place_member(
     mh: HWND,
     content: (i32, i32, i32, i32),
@@ -69,8 +77,17 @@ pub(super) fn place_member(
     unsafe {
         let _ = SetWindowPos(mh, None, x, y, w, h, flags);
         if crop && (ox != 0 || oy != 0 || fw != 0 || fh != 0) {
+            let key = (mh.0 as isize, w, h, ox, oy, fw, fh);
+            if LAST_REGION.with(|c| c.get()) == Some(key) {
+                return;
+            }
             let rgn = CreateRectRgn(ox, oy, ox + cw, oy + ch);
-            if !rgn.0.is_null() && SetWindowRgn(mh, Some(rgn), true) == 0 {
+            if rgn.0.is_null() {
+                return;
+            }
+            if SetWindowRgn(mh, Some(rgn), true) != 0 {
+                LAST_REGION.with(|c| c.set(Some(key)));
+            } else {
                 let _ = DeleteObject(HGDIOBJ(rgn.0));
             }
         }

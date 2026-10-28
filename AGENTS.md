@@ -13,7 +13,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked
 ```
-- `cargo test` only runs `src/core` and `src/config`. Check `src/ui` and `src/win` by running `target\debug\slate.exe`. Kill any running `slate.exe` first (it locks the exe).
+- `cargo test` covers `src/core`, `src/config`, the pure helpers in `src/ui` and `src/win`, and the comment-style lint in `tests/`. The interactive UI and Win32 paths still need a run of `target\debug\slate.exe`. Kill any running `slate.exe` first (it locks the exe).
 
 ## Layout
 - `src/core/` - pure state (groups, tabs, saved sets, install/update planning) + tests

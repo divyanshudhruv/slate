@@ -2,8 +2,8 @@ use std::ffi::c_void;
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC,
-    SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
+    CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP,
+    BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassLongPtrW, GetIconInfo, SendMessageTimeoutW, GCLP_HICON, GCLP_HICONSM, HICON, ICONINFO,
@@ -138,7 +138,6 @@ unsafe fn dibits(mem: HDC, hbm: HBITMAP, width: u32, height: u32) -> Option<Vec<
         ..Default::default()
     };
     let mut buf = vec![0u8; (width as usize) * (height as usize) * 4];
-    let old = SelectObject(mem, HGDIOBJ(hbm.0));
     let got = GetDIBits(
         mem,
         hbm,
@@ -148,6 +147,5 @@ unsafe fn dibits(mem: HDC, hbm: HBITMAP, width: u32, height: u32) -> Option<Vec<
         &mut info,
         DIB_RGB_COLORS,
     );
-    SelectObject(mem, old);
     (got != 0).then_some(buf)
 }

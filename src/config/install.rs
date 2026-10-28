@@ -1,11 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use super::load::app_dir;
+use super::paths;
 use super::save::atomic_write;
 use super::schema::InstallRecord;
 
 pub fn slate_dir() -> PathBuf {
-    app_dir()
+    paths::install_dir()
 }
 
 pub fn canonical_exe_path() -> PathBuf {
@@ -13,7 +13,7 @@ pub fn canonical_exe_path() -> PathBuf {
 }
 
 pub fn install_path() -> PathBuf {
-    slate_dir().join("install.json")
+    paths::install_path()
 }
 
 pub fn load_install() -> Option<InstallRecord> {
@@ -25,7 +25,7 @@ pub fn save_install(record: &InstallRecord) -> bool {
 }
 
 pub fn staging_updates_dir() -> PathBuf {
-    slate_dir().join("updates")
+    paths::updates_dir()
 }
 
 fn read_install(path: &Path) -> Option<InstallRecord> {
@@ -55,35 +55,46 @@ mod tests {
     }
 
     #[test]
-    fn canonical_exe_sits_inside_the_slate_dir() {
-        let dir = scratch("layout");
-        let _ = std::fs::create_dir_all(&dir);
-        let record = InstallRecord {
-            path: "C:\\apps\\slate.exe".into(),
-            version: "0.1.1".into(),
-            pid: 99,
-        };
-        assert!(write_install(&dir.join("install.json"), &record));
+    fn canonical_exe_sits_inside_the_install_dir() {
+        assert_eq!(canonical_exe_path().parent(), Some(slate_dir().as_path()));
         assert_eq!(
-            canonical_exe_path().parent().and_then(|p| p.file_name()),
-            Some(std::ffi::OsStr::new("slate"))
+            canonical_exe_path().file_name(),
+            Some(std::ffi::OsStr::new("slate.exe"))
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(slate_dir(), paths::install_dir());
     }
 
     #[test]
-    fn the_slate_dir_is_the_folder_the_menu_opens() {
-        let dir = slate_dir();
-        assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some("slate"));
+    fn the_install_dir_is_under_programs() {
+        if paths::is_portable() {
+            return;
+        }
+        let parent = slate_dir().parent().map(|p| p.to_path_buf());
         assert_eq!(
-            dir.parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str()),
-            Some(".burntfern")
+            parent.as_deref().and_then(|p| p.file_name()),
+            Some(std::ffi::OsStr::new("Burntfern"))
         );
-        assert_eq!(canonical_exe_path().parent(), Some(dir.as_path()));
-        assert_eq!(install_path().parent(), Some(dir.as_path()));
-        assert_eq!(staging_updates_dir().parent(), Some(dir.as_path()));
+        assert_eq!(
+            parent
+                .as_deref()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.file_name()),
+            Some(std::ffi::OsStr::new("Programs"))
+        );
+    }
+
+    #[test]
+    fn install_record_and_updates_live_in_the_data_dir() {
+        assert_eq!(install_path().parent(), Some(paths::data_dir().as_path()));
+        assert_eq!(
+            paths::settings_path().parent(),
+            Some(paths::data_dir().as_path())
+        );
+        assert_eq!(staging_updates_dir(), paths::updates_dir());
+        assert_eq!(
+            staging_updates_dir().parent(),
+            Some(paths::data_dir().as_path())
+        );
     }
 
     #[test]

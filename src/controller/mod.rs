@@ -1,3 +1,5 @@
+mod banner;
+mod dialog;
 mod dispatch;
 mod dto;
 mod events;
@@ -10,15 +12,14 @@ mod tabs;
 mod update;
 
 pub use dto::{
-    Cmd, HostInfo, HoverPreview, PickerRow, SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
+    BannerAction, BannerKind, BannerView, Cmd, ContextMenuItem, Dialog, HostInfo, HoverPreview,
+    PickerRow, SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
 };
 
-use ely_gpui_component::feedback::Toaster;
-use gpui::{AppContext, Context, Entity, RenderImage, SharedString};
+use gpui::{Context, RenderImage, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use self::dto::app_name;
 use crate::config;
@@ -29,9 +30,6 @@ use crate::win::{
 };
 use std::os::windows::process::CommandExt;
 
-pub(super) const PREVIEW_OPEN_MS: u64 = 500;
-pub(super) const PREVIEW_LINGER_MS: u64 = 200;
-
 pub struct Controller {
     windows: Vec<WindowIdentity>,
     groups: GroupSet,
@@ -41,7 +39,7 @@ pub struct Controller {
     styling: HashMap<isize, StylingState>,
     worker: HostWorker,
     janitor: Janitor,
-    toaster: Entity<Toaster>,
+    keybind_error: Option<String>,
     picking: bool,
     hovered: Option<isize>,
     pick_gen: u64,
@@ -49,31 +47,75 @@ pub struct Controller {
     highlight: Option<Highlight>,
     pub settings: config::Settings,
     icons: HashMap<isize, Option<Arc<RenderImage>>>,
-    overlay: bool,
-    tab_menu_open: bool,
-    picker_open: bool,
-    picker_rows: Vec<PickerRow>,
+    menus: Menus,
+    session_sig: u64,
     saved_sets: Vec<config::SavedSet>,
     saved_avail: HashMap<u64, usize>,
-    saved_menu_open: bool,
-    saved_prompt: Option<SavedPrompt>,
-    tab_menu: Option<TabMenu>,
-    renaming: Option<(GroupId, TabId)>,
     rename_overrides: HashMap<isize, String>,
     tab_colors: HashMap<isize, usize>,
-    hover_preview: Option<HoverPreview>,
-    hover_tab: Option<TabId>,
-    card_hovered: bool,
     preview_gen: u64,
     snapshots: HashMap<isize, Arc<RenderImage>>,
     shortcuts: Option<ShortcutCapture>,
     tray: Option<crate::win::TrayIcon>,
     drag: Option<isize>,
     drag_active: bool,
-    update: UpdateState,
+    updater: Updater,
+    keybind_draft: Vec<Option<crate::core::keys::Chord>>,
     info_cache: RefCell<Option<Arc<HostInfo>>>,
     index_cache: RefCell<Option<Index>>,
+    save_error: RefCell<Option<String>>,
     _pump: Option<WinEventPump>,
+}
+
+/// Every surface that can be open above the tabs, plus each menu's keyboard cursor.
+#[derive(Default)]
+struct Menus {
+    overlay: bool,
+    tab_menu_open: bool,
+    tab_menu_cursor: Option<usize>,
+    picker_open: bool,
+    picker_rows: Vec<PickerRow>,
+    picker_picks: Vec<isize>,
+    picker_cursor: Option<usize>,
+    saved_menu_open: bool,
+    saved_prompt: Option<SavedPrompt>,
+    saved_menu_cursor: Option<usize>,
+    tab_menu: Option<TabMenu>,
+    ctx_menu_cursor: Option<usize>,
+    renaming: Option<(GroupId, TabId)>,
+    hover_preview: Option<HoverPreview>,
+    hover_tab: Option<TabId>,
+    card_hovered: bool,
+    dialog: Option<Dialog>,
+}
+
+impl Menus {
+    /// A click anywhere in the body closes these; a rename or a prompt keeps its own focus.
+    fn dismissable(&self) -> bool {
+        self.overlay
+            || self.tab_menu_open
+            || self.picker_open
+            || self.saved_menu_open
+            || self.tab_menu.is_some()
+            || self.dialog.is_some()
+    }
+
+    fn escapable(&self) -> bool {
+        self.dismissable()
+            || self.renaming.is_some()
+            || self.saved_prompt.is_some()
+            || self.hover_preview.is_some()
+    }
+}
+
+/// The update check, the verified build waiting for a restart, and the banner that announces it.
+#[derive(Default)]
+struct Updater {
+    state: UpdateState,
+    pending_install: Option<(String, std::path::PathBuf)>,
+    banner: Option<BannerView>,
+    banner_id: u64,
+    banner_hidden: Option<String>,
 }
 
 #[derive(Default)]
@@ -86,14 +128,14 @@ struct Index {
 impl Controller {
     pub fn new(cx: &mut Context<Self>) -> Self {
         config::ensure();
-        Self::execute_startup_plan(update::startup_install());
-        let toaster = cx.new(|_| Toaster::default());
         let settings = config::load();
+        let stale_schema = config::schema_is_newer();
         let update = UpdateState::from_cached(
             crate::core::update::CURRENT_VERSION,
             settings.updates.latest.as_deref(),
         );
-        let controller = Self {
+        let janitor = Janitor::new();
+        let mut controller = Self {
             windows: enumerate_windows(),
             groups: GroupSet::new(),
             active_group: None,
@@ -101,7 +143,7 @@ impl Controller {
             titlebar: 0.0,
             styling: HashMap::new(),
             worker: HostWorker::new(),
-            janitor: Janitor::new(),
+            janitor,
             picking: false,
             hovered: None,
             pick_gen: 0,
@@ -109,52 +151,99 @@ impl Controller {
             highlight: None,
             settings,
             icons: HashMap::new(),
-            overlay: false,
-            tab_menu_open: false,
-            picker_open: false,
-            picker_rows: Vec::new(),
+            menus: Menus::default(),
+            session_sig: 0,
             saved_sets: config::load_sets().sets,
             saved_avail: HashMap::new(),
-            saved_menu_open: false,
-            saved_prompt: None,
-            tab_menu: None,
-            renaming: None,
             rename_overrides: HashMap::new(),
             tab_colors: HashMap::new(),
-            hover_preview: None,
-            hover_tab: None,
-            card_hovered: false,
             preview_gen: 0,
             snapshots: HashMap::new(),
             shortcuts: ShortcutCapture::install(),
             tray: crate::win::TrayIcon::start(),
             drag: None,
             drag_active: false,
-            update,
+            updater: Updater {
+                state: update,
+                ..Updater::default()
+            },
+            keybind_draft: Vec::new(),
             info_cache: RefCell::new(None),
             index_cache: RefCell::new(None),
+            save_error: RefCell::new(None),
             _pump: WinEventPump::install(),
-            toaster,
+            keybind_error: None,
         };
         Self::start_event_pump(cx);
         controller.apply_theme(cx);
+        dialog::push_shortcuts(&controller.settings);
+        if stale_schema {
+            controller.note_error(
+                "Your settings were written by a newer Slate. Running with defaults and not \
+                 saving, so the file stays intact.",
+                None,
+                cx,
+            );
+        }
         controller
     }
 
-    fn execute_startup_plan(plan: crate::core::install::Plan) {
+    /// The installed copy, when it is already running.
+    fn running_canonical() -> Option<u32> {
+        let record = config::load_install()?;
+        let canonical = config::canonical_exe_path();
+        let same = record
+            .path
+            .eq_ignore_ascii_case(&canonical.to_string_lossy());
+        (same && record.pid != std::process::id() && crate::win::process_alive(record.pid))
+            .then_some(record.pid)
+    }
+
+    /// Runs the install and update plan before the UI exists; Some means Slate must exit.
+    fn execute_startup_plan(plan: crate::core::install::Plan) -> Option<i32> {
         match plan {
-            crate::core::install::Plan::Dev => {}
+            crate::core::install::Plan::Dev => None,
             crate::core::install::Plan::Run { exe, canonical } => {
+                if !canonical && crate::config::paths::is_legacy_install(&exe) {
+                    if let Some(pid) = Self::running_canonical() {
+                        if activate_process(pid) {
+                            crate::win::shell::info_message(
+                                "Slate is already running",
+                                "Switching to the open window.",
+                            );
+                        }
+                        return Some(0);
+                    }
+                    if let Err(err) = crate::win::update::relocate(&exe) {
+                        crate::win::shell::info_message(
+                            "Could not move Slate to its install folder",
+                            &err,
+                        );
+                        return Some(1);
+                    }
+                    crate::win::shell::info_message(
+                        "Slate moved",
+                        &format!(
+                            "Slate now runs from {}. A shortcut was added to the Start menu.",
+                            crate::config::paths::install_dir().display()
+                        ),
+                    );
+                    return Some(0);
+                }
+                if !crate::win::shell_link::start_menu_shortcut_exists() {
+                    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(
+                        std::path::Path::new(&exe),
+                    ) {
+                        tracing::warn!("start menu shortcut: {err}");
+                    }
+                }
                 config::save_install(&config::InstallRecord {
                     path: exe,
                     version: crate::core::update::CURRENT_VERSION.to_string(),
                     pid: std::process::id(),
                 });
-                if canonical {
-                    let _ = std::fs::remove_file(crate::core::install::backup_path(
-                        &config::canonical_exe_path(),
-                    ));
-                }
+                // The pre-update backup is dropped on the first frame instead, so a build that never starts can roll back.
+                None
             }
             crate::core::install::Plan::FocusRunning { pid } => {
                 if activate_process(pid) {
@@ -163,50 +252,57 @@ impl Controller {
                         "Switching to the open window.",
                     );
                 }
-                std::process::exit(0);
+                Some(0)
             }
             crate::core::install::Plan::Bootstrap { source } => {
                 if let Err(err) = crate::win::update::bootstrap(&source) {
                     crate::win::shell::info_message("First-run bootstrap failed", &err);
-                    std::process::exit(1);
+                    return Some(1);
                 }
                 let _ = std::process::Command::new(config::canonical_exe_path())
                     .creation_flags(0)
                     .spawn();
-                std::process::exit(0);
+                Some(0)
             }
             crate::core::install::Plan::Update { candidate } => {
                 if let Err(err) = crate::win::update::refresh_install_from(&candidate) {
                     crate::win::shell::info_message("Update from downloaded release failed", &err);
-                    std::process::exit(1);
+                    return Some(1);
                 }
-                std::process::exit(0);
+                Some(0)
             }
             crate::core::install::Plan::Defer { canonical } => {
                 let _ = std::process::Command::new(&canonical)
                     .creation_flags(0)
                     .spawn();
-                std::process::exit(0);
+                Some(0)
             }
         }
     }
 
     fn start_event_pump(cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(50))
-                .await;
-            if this
-                .update(cx, |controller, cx| controller.tick(cx))
-                .is_err()
-            {
-                break;
+        cx.spawn(async move |this, cx| {
+            let mut delay = crate::timings::UI_TICK;
+            loop {
+                cx.background_executor().timer(delay).await;
+                match this.update(cx, |controller, cx| controller.tick(cx)) {
+                    Ok(busy) => {
+                        delay = if busy {
+                            crate::timings::UI_TICK
+                        } else {
+                            crate::timings::UI_IDLE_TICK
+                        };
+                    }
+                    Err(_) => break,
+                }
             }
         })
         .detach();
     }
 
-    fn tick(&mut self, cx: &mut Context<Self>) {
+    /// Returns true while the host is busy enough to stay on the fast tick.
+    fn tick(&mut self, cx: &mut Context<Self>) -> bool {
+        self.flush_save_error(cx);
         let mut changed = self.drain_events();
         let shortcuts = self
             .shortcuts
@@ -222,6 +318,7 @@ impl Controller {
             self.sync_worker();
             cx.notify();
         }
+        changed || self.picking || self.drag.is_some() || self.menus.escapable()
     }
 
     pub fn host_info(&self) -> Arc<HostInfo> {
@@ -246,10 +343,16 @@ impl Controller {
         };
         let version_label =
             SharedString::from(format!("Slate v{}", crate::core::update::CURRENT_VERSION));
-        let update_label = match &self.update {
+        let update_label = match &self.updater.state {
             UpdateState::Checking => SharedString::from("Checking for updates\u{2026}"),
             UpdateState::Available(version) => {
                 SharedString::from(format!("Update available: v{version}"))
+            }
+            UpdateState::Downloading(version, percent) => {
+                SharedString::from(format!("Downloading v{version}: {percent}%"))
+            }
+            UpdateState::Installing(version) => {
+                SharedString::from(format!("Restart to install v{version}"))
             }
             UpdateState::UpToDate => SharedString::from("Slate is up to date"),
             UpdateState::Idle => SharedString::from("Check for updates"),
@@ -268,9 +371,11 @@ impl Controller {
                                 .get(&t.window.hwnd)
                                 .cloned()
                                 .unwrap_or_else(|| t.window.title.clone()),
-                            app: app_name(&t.window.exe_name),
+                            app: self
+                                .rule_for(&t.window.exe_name)
+                                .and_then(|rule| rule.label.clone())
+                                .unwrap_or_else(|| app_name(&t.window.exe_name)),
                             exe: t.window.exe_name.clone(),
-                            exe_path: t.window.exe_path.clone(),
                             icon: self.icons.get(&t.window.hwnd).cloned().flatten(),
                             accent: self.tab_colors.get(&t.window.hwnd).copied(),
                         })
@@ -281,11 +386,16 @@ impl Controller {
             icons_in_tabs: self.settings.tabs.icons,
             show_tab_badge: self.settings.tabs.count_badge,
             hover_preview_enabled: self.settings.tabs.hover_preview,
-            overlay: self.overlay,
-            tab_menu_open: self.tab_menu_open,
-            picker_open: self.picker_open,
-            picker_rows: self.picker_rows.clone(),
-            saved_menu_open: self.saved_menu_open,
+            theme: SharedString::from(self.settings.theme.as_str()),
+            restore_session: self.settings.restore_session,
+            overlay: self.menus.overlay,
+            tab_menu_open: self.menus.tab_menu_open,
+            tab_menu_cursor: self.menus.tab_menu_cursor,
+            picker_open: self.menus.picker_open,
+            picker_rows: self.menus.picker_rows.clone(),
+            picker_picks: self.menus.picker_picks.clone(),
+            picker_cursor: self.menus.picker_cursor,
+            saved_menu_open: self.menus.saved_menu_open,
             saved_sets: self
                 .saved_sets
                 .iter()
@@ -299,28 +409,34 @@ impl Controller {
                     }
                 })
                 .collect(),
-            saved_prompt: self.saved_prompt,
-            tab_menu: self.tab_menu.clone(),
-            renaming: self.renaming.map(|(_, tab)| tab),
+            saved_prompt: self.menus.saved_prompt,
+            tab_menu: self.menus.tab_menu.clone(),
+            ctx_menu_items: self.ctx_menu_items(),
+            ctx_menu_cursor: self.menus.ctx_menu_cursor,
+            saved_menu_cursor: self.menus.saved_menu_cursor,
+            renaming: self.menus.renaming,
             picking: self.picking,
-            hover_preview: self.hover_preview.clone(),
+            hover_preview: self.menus.hover_preview.clone(),
             show_tab_bar: self.settings.tabs.show_bar,
-            update: self.update.clone(),
+            update: self.updater.state.clone(),
+            update_banner_hidden: self.updater.banner_hidden.clone(),
+            banner: self.updater.banner.clone(),
+            keybind_error: self.keybind_error.clone().map(SharedString::from),
+            dialog: self.menus.dialog,
+            keybinds: self.settings.keybinds.clone(),
             caption,
             version_label,
             update_label,
+            beta_channel: self.settings.updates.channel == crate::core::update::Channel::Beta,
         }
     }
 
-    // refresh_saved_avail defined in sets.rs to avoid duplication
-
-    pub fn toaster(&self) -> Entity<Toaster> {
-        self.toaster.clone()
-    }
-
     fn shutdown(&mut self) {
+        self.persist_session();
         self.end_pick();
         self.hide_hover_preview();
+        // Stop placement before unhooking members, otherwise a late pass can hide a window that was just restored.
+        self.worker.stop_and_wait();
         let restore_focus = self.active_group.and_then(|g| self.active_hwnd(g));
         for (hwnd, state) in self.styling.drain() {
             unregister_member(hwnd, &state);
@@ -331,19 +447,25 @@ impl Controller {
         self.groups = GroupSet::new();
         self.active_group = None;
         self.host_hwnd = None;
-        self.overlay = false;
-        self.tab_menu_open = false;
-        self.picker_open = false;
-        self.picker_rows.clear();
-        self.tab_menu = None;
-        self.renaming = None;
+        self.menus.overlay = false;
+        self.menus.tab_menu_open = false;
+        self.menus.tab_menu_cursor = None;
+        self.menus.picker_open = false;
+        self.menus.picker_rows.clear();
+        self.menus.picker_cursor = None;
+        self.menus.tab_menu = None;
+        self.menus.ctx_menu_cursor = None;
+        self.menus.saved_menu_cursor = None;
+        self.menus.renaming = None;
         self.rename_overrides.clear();
         self.drag = None;
         self.drag_active = false;
         if let Some(highlight) = self.highlight.as_ref() {
             highlight.hide();
         }
-        self.worker.stop();
+        // Everything is restored, so the crash payload must not be replayed by the janitor child.
+        self.janitor.disarm();
+        self.session_sig = self.session_signature();
     }
 
     fn reconcile_active_group(&mut self) {
@@ -400,4 +522,60 @@ impl Controller {
             .as_ref()
             .and_then(|index| index.by_hwnd.get(&hwnd).copied())
     }
+
+    /// The first rule naming this executable, compared case-insensitively.
+    pub(super) fn rule_for(&self, exe_name: &str) -> Option<&crate::config::AppRule> {
+        self.settings
+            .rules
+            .iter()
+            .find(|rule| !rule.exe.is_empty() && rule.exe.eq_ignore_ascii_case(exe_name))
+    }
+
+    /// Builds a support report and puts it on the clipboard, so users paste instead of hunting folders.
+    pub(super) fn copy_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let mut out = String::new();
+        out.push_str(&format!("Slate {}\n", crate::core::update::CURRENT_VERSION));
+        out.push_str(&format!(
+            "OS: {} {} / schema {}\n",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            crate::config::SCHEMA_VERSION
+        ));
+        out.push_str(&format!(
+            "Data: {}\n",
+            crate::config::paths::data_dir().display()
+        ));
+        out.push_str(&format!(
+            "Hosted windows: {} in {} groups\n",
+            self.styling.len(),
+            self.groups.groups().len()
+        ));
+        out.push_str(&format!(
+            "Update channel: {}\n",
+            self.settings.updates.channel.as_str()
+        ));
+        out.push_str("\n--- settings.json ---\n");
+        out.push_str(
+            &serde_json::to_string_pretty(&self.settings).unwrap_or_else(|_| "(unreadable)".into()),
+        );
+        out.push_str("\n\n--- log tail ---\n");
+        out.push_str(&crate::logging::tail(120));
+        out.push('\n');
+        let chars = out.chars().count();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(out));
+        self.note_success(
+            format!("Diagnostics copied: {chars} characters on the clipboard"),
+            cx,
+        );
+    }
+}
+/// Runs the install and update plan before any UI exists; Some means Slate must exit.
+pub fn startup() -> Option<i32> {
+    if let Some(code) = crate::win::update::recover_interrupted_update() {
+        return Some(code);
+    }
+    if !crate::win::instance::claim() {
+        return Some(0);
+    }
+    Controller::execute_startup_plan(update::startup_install())
 }

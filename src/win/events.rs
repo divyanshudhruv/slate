@@ -1,8 +1,9 @@
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_OBJECT_DESTROY, EVENT_OBJECT_NAMECHANGE, EVENT_SYSTEM_MOVESIZEEND,
-    EVENT_SYSTEM_MOVESIZESTART, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
+    EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,6 +12,7 @@ pub enum WinEvent {
     TitleChanged(isize),
     MoveStarted(isize),
     MoveEnded(isize),
+    Moved(isize),
 }
 
 thread_local! {
@@ -37,6 +39,7 @@ unsafe extern "system" fn hook_proc(
         EVENT_OBJECT_NAMECHANGE => WinEvent::TitleChanged(hwnd.0 as isize),
         EVENT_SYSTEM_MOVESIZESTART => WinEvent::MoveStarted(hwnd.0 as isize),
         EVENT_SYSTEM_MOVESIZEEND => WinEvent::MoveEnded(hwnd.0 as isize),
+        EVENT_OBJECT_LOCATIONCHANGE => WinEvent::Moved(hwnd.0 as isize),
         _ => return,
     };
     QUEUE.with(|q| q.borrow_mut().push(e));
@@ -60,6 +63,18 @@ impl WinEventPump {
                     return None;
                 }
                 hooks.push(hook);
+            }
+            let moved = SetWinEventHook(
+                EVENT_OBJECT_LOCATIONCHANGE,
+                EVENT_OBJECT_LOCATIONCHANGE,
+                None,
+                Some(hook_proc),
+                0,
+                0,
+                flags,
+            );
+            if !moved.0.is_null() {
+                hooks.push(moved);
             }
             let move_start = SetWinEventHook(
                 EVENT_SYSTEM_MOVESIZESTART,

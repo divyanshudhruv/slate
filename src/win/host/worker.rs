@@ -2,7 +2,6 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -45,6 +44,7 @@ struct Inner {
     shared: Arc<Mutex<HostShared>>,
     running: Arc<AtomicBool>,
     started: AtomicBool,
+    applying: Arc<AtomicBool>,
     wake: Arc<(Mutex<()>, Condvar)>,
 }
 
@@ -68,6 +68,7 @@ impl HostWorker {
                 shared: Arc::new(Mutex::new(HostShared::default())),
                 running: Arc::new(AtomicBool::new(true)),
                 started: AtomicBool::new(false),
+                applying: Arc::new(AtomicBool::new(false)),
                 wake: Arc::new((Mutex::new(()), Condvar::new())),
             }),
         }
@@ -90,15 +91,17 @@ impl HostWorker {
         }
         let shared = self.inner.shared.clone();
         let running = self.inner.running.clone();
+        let applying = self.inner.applying.clone();
         let wake = self.inner.wake.clone();
         thread::spawn(move || {
             let mut last = WorkerState::default();
+            let mut wait = crate::timings::MEMBER_SYNC;
             while running.load(Ordering::Relaxed) {
                 {
                     let (lock, cvar) = &*wake;
                     let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
                     let _ = cvar
-                        .wait_timeout(guard, Duration::from_millis(50))
+                        .wait_timeout(guard, wait)
                         .unwrap_or_else(|e| e.into_inner());
                 }
                 if !running.load(Ordering::Relaxed) {
@@ -113,13 +116,24 @@ impl HostWorker {
                         hidden: s.hidden.clone(),
                     }
                 };
+                applying.store(true, Ordering::SeqCst);
                 apply(snap, &mut last);
+                applying.store(false, Ordering::SeqCst);
                 {
                     let mut s = shared.lock().unwrap_or_else(|e| e.into_inner());
                     s.inset = last.inset;
                 }
+                wait = if last.settle > 0 {
+                    crate::timings::MEMBER_SYNC
+                } else {
+                    crate::timings::MEMBER_SYNC_IDLE
+                };
             }
         });
+    }
+
+    pub fn nudge(&self) {
+        self.inner.wake.1.notify_all();
     }
 
     pub fn stop(&self) {
@@ -127,8 +141,19 @@ impl HostWorker {
         self.inner.wake.1.notify_all();
     }
 
+    /// Stops, then waits for an in-flight placement pass so shutdown can restore members without being re-hidden.
+    pub fn stop_and_wait(&self) {
+        self.stop();
+        for _ in 0..250 {
+            if !self.inner.applying.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
     pub fn install_move_tracker(&self, host: isize) {
-        if host == 0 || TRACKER_ORIG.with(|o| o.get()) != 0 {
+        if host == 0 || TRACKER_HOST.with(Cell::get) == host {
             return;
         }
         let hwnd = HWND(host as *mut _);
@@ -140,7 +165,9 @@ impl HostWorker {
             if !set_long_ptr(hwnd, GWLP_WNDPROC, host_proc as *const () as isize) {
                 return;
             }
+            // A recreated host is subclassed on its own; the previous window keeps its old proc.
             TRACKER_ORIG.with(|o| o.set(orig));
+            TRACKER_HOST.with(|h| h.set(host));
             TRACKER.with(|t| *t.borrow_mut() = Some(self.inner.shared.clone()));
         }
     }
@@ -149,6 +176,7 @@ impl HostWorker {
 thread_local! {
     static TRACKER: RefCell<Option<Arc<Mutex<HostShared>>>> = const { RefCell::new(None) };
     static TRACKER_ORIG: Cell<isize> = const { Cell::new(0) };
+    static TRACKER_HOST: Cell<isize> = const { Cell::new(0) };
 }
 
 unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
@@ -202,7 +230,7 @@ struct WorkerState {
     settle: u8,
 }
 
-const SETTLE_PASSES: u8 = 12;
+const SETTLE_PASSES: u8 = crate::timings::SETTLE_PASSES;
 
 fn apply(mut s: Snapshot, last: &mut WorkerState) {
     let host = HWND(s.host as *mut _);

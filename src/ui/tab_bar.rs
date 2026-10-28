@@ -13,6 +13,9 @@ use gpui::{
     FontWeight, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point,
     RenderImage, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window,
 };
+
+use crate::ui::metrics::TAB_GAP;
+
 #[derive(Clone)]
 pub enum TabIcon {
     Real(Arc<RenderImage>),
@@ -138,7 +141,7 @@ impl RenderOnce for SlateTabBar {
             .entity_id();
         let theme = cx.theme();
         let (narrow, wide) = theme.tab_width();
-        let (rem, gap) = (window.rem_size(), px(4.0));
+        let (rem, gap) = (window.rem_size(), px(TAB_GAP));
         let n = self.tabs.len();
         let content_w = wide.to_pixels(rem) * (n as f32) + gap * (n.saturating_sub(1) as f32);
         let icon_px = theme.icon_size(IconSize::Sm).to_pixels(theme.base_rem());

@@ -1,12 +1,16 @@
 name: Deny
 
+# Mirrors CI so the two never run twice for the same change: pushes to
+# development, pull requests into main, and a weekly advisory sweep.
 on:
   push:
+    branches: [development]
     paths:
       - Cargo.toml
       - Cargo.lock
       - deny.toml
   pull_request:
+    branches: [main]
     paths:
       - Cargo.toml
       - Cargo.lock

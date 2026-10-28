@@ -1,13 +1,25 @@
 {
   "schema_version": 1,
+  "theme": "system",
+  "accent": "none",
+  "restore_session": true,
+  "preview_delay_ms": 500,
   "tabs": {
     "icons": true,
     "count_badge": true,
-    "hover_preview": true,
+    "hover_preview": false,
     "show_bar": true
   },
   "updates": {
     "latest": null,
-    "checked_at": 0
-  }
+    "checked_at": 0,
+    "channel": "stable"
+  },
+  "keybinds": {
+    "next_tab": "ctrl+tab",
+    "prev_tab": "ctrl+shift+tab",
+    "close_tab": "ctrl+w",
+    "select_tab": "ctrl+1"
+  },
+  "rules": []
 }

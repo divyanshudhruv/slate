@@ -5,12 +5,13 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::Graphics::Gdi::SetWindowRgn;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, IsIconic, IsZoomed, SetWindowLongPtrW,
-    SetWindowPlacement, SetWindowPos, ShowWindow, GWL_EXSTYLE, GWL_HWNDPARENT, GWL_STYLE, HWND_TOP,
-    SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SW_HIDE, SW_RESTORE, SW_SHOWMINIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNA, WINDOWPLACEMENT,
-    WINDOW_LONG_PTR_INDEX, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
-    WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, IsHungAppWindow, IsIconic, IsWindow,
+    IsWindowVisible, IsZoomed, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, ShowWindow,
+    GWL_EXSTYLE, GWL_HWNDPARENT, GWL_STYLE, HWND_TOP, SET_WINDOW_POS_FLAGS, SWP_ASYNCWINDOWPOS,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_RESTORE,
+    SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNA, SW_SHOWNORMAL,
+    WINDOWPLACEMENT, WINDOW_LONG_PTR_INDEX, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 const FRAME: isize = WS_CAPTION.0 as isize
@@ -56,6 +57,10 @@ pub fn register_member(host: isize, member: isize) -> Option<StylingState> {
         let style = GetWindowLongPtrW(mh, GWL_STYLE);
         let exstyle = GetWindowLongPtrW(mh, GWL_EXSTYLE);
         let owner = GetWindowLongPtrW(mh, GWL_HWNDPARENT);
+        // Probe the style writes before the owner changes, so a refusal leaves the window untouched.
+        if !set_long_ptr(mh, GWL_STYLE, style) || !set_long_ptr(mh, GWL_EXSTYLE, exstyle) {
+            return None;
+        }
         if !set_long_ptr(mh, GWL_HWNDPARENT, host) {
             return None;
         }
@@ -109,43 +114,47 @@ fn set_frame_treatment(mh: HWND, hosted: bool) {
     }
 }
 
-pub fn unregister_member(member: isize, st: &StylingState) {
+/// Style-only flags; a hung target gets the asynchronous variant so restore never blocks on it.
+fn frame_flags(mh: HWND) -> SET_WINDOW_POS_FLAGS {
+    let base = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE;
+    if unsafe { IsHungAppWindow(mh).as_bool() } {
+        base | SWP_ASYNCWINDOWPOS
+    } else {
+        base
+    }
+}
+
+/// Returns a member to the desktop. False when the window died first, so a replay sees a partial restore.
+pub fn unregister_member(member: isize, st: &StylingState) -> bool {
     if member == 0 {
-        return;
+        return false;
     }
     let mh = HWND(member as *mut _);
     unsafe {
+        if !IsWindow(Some(mh)).as_bool() {
+            return true;
+        }
         let minimized = IsIconic(mh).as_bool() || st.placement.showCmd as i32 == SW_SHOWMINIMIZED.0;
+        let maximized = st.placement.showCmd as i32 == SW_SHOWMAXIMIZED.0;
         let _ = ShowWindow(mh, SW_HIDE);
         let _ = SetWindowRgn(mh, None, true);
-        let _ = set_long_ptr(mh, GWL_HWNDPARENT, st.owner);
-        let _ = set_long_ptr(mh, GWL_STYLE, st.style);
-        let ex = GetWindowLongPtrW(mh, GWL_EXSTYLE);
-        let _ = set_long_ptr(mh, GWL_EXSTYLE, ex | WS_EX_TOOLWINDOW.0 as isize);
-        let _ = SetWindowPos(
-            mh,
-            None,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE,
-        );
-        let _ = set_long_ptr(mh, GWL_EXSTYLE, st.exstyle);
+        let mut ok = set_long_ptr(mh, GWL_HWNDPARENT, st.owner);
+        ok &= set_long_ptr(mh, GWL_STYLE, st.style);
+        ok &= set_long_ptr(mh, GWL_EXSTYLE, st.exstyle);
+        let _ = SetWindowPos(mh, None, 0, 0, 0, 0, frame_flags(mh));
         set_frame_treatment(mh, false);
-        let _ = SetWindowPlacement(mh, &st.placement);
-        let (l, t, r, b) = st.rect;
-        let w = (r - l).max(0);
-        let h = (b - t).max(0);
-        let _ = SetWindowPos(
-            mh,
-            Some(HWND_TOP),
-            l,
-            t,
-            w,
-            h,
-            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
-        );
+        ok &= SetWindowPlacement(mh, &st.placement).is_ok();
+        // A maximized or minimized placement already carries its geometry; moving it again would rewrite the restored bounds.
+        if !minimized && !maximized {
+            let (l, t, r, b) = st.rect;
+            let w = (r - l).max(0);
+            let h = (b - t).max(0);
+            let mut flags = SWP_FRAMECHANGED | SWP_NOACTIVATE;
+            if IsHungAppWindow(mh).as_bool() {
+                flags |= SWP_ASYNCWINDOWPOS;
+            }
+            let _ = SetWindowPos(mh, Some(HWND_TOP), l, t, w, h, flags);
+        }
         let _ = ShowWindow(
             mh,
             if minimized {
@@ -154,5 +163,38 @@ pub fn unregister_member(member: isize, st: &StylingState) {
                 SW_SHOWNA
             },
         );
+        // Some apps ignore the no-activate show after a frame change; make sure a normal window is really back on screen.
+        if !minimized && !IsWindowVisible(mh).as_bool() {
+            let _ = ShowWindow(mh, SW_SHOWNORMAL);
+        }
+        // The shell only notices a window is taskbar-eligible once it is visible, so the button is refreshed last.
+        let wants_button = st.owner == 0 || st.exstyle & WS_EX_APPWINDOW.0 as isize != 0;
+        let excludes_button =
+            st.exstyle & (WS_EX_TOOLWINDOW.0 as isize | WS_EX_NOACTIVATE.0 as isize) != 0;
+        if wants_button && !excludes_button {
+            refresh_taskbar_button(mh);
+        }
+        ok
+    }
+}
+
+/// Asks the shell to rebuild the taskbar button that ownership and style writes left stale.
+fn refresh_taskbar_button(mh: HWND) {
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::ITaskbarList;
+    const CLSID_TASKBAR_LIST: windows::core::GUID =
+        windows::core::GUID::from_u128(0x56fdf344_fd6d_11d0_958a_006097c9a090);
+    unsafe {
+        let _com = crate::win::ComApartment::init();
+        let Ok(list) =
+            CoCreateInstance::<_, ITaskbarList>(&CLSID_TASKBAR_LIST, None, CLSCTX_INPROC_SERVER)
+        else {
+            return;
+        };
+        if list.HrInit().is_err() {
+            return;
+        }
+        let _ = list.DeleteTab(mh);
+        let _ = list.AddTab(mh);
     }
 }
