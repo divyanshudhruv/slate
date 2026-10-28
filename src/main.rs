@@ -30,7 +30,13 @@ fn main() {
         win::janitor::run(std::path::PathBuf::from(path), pid);
         return;
     }
-    // The janitor helper must not install the global keyboard hook.
+    if let Some(i) = args.iter().position(|a| a == "--swap-helper") {
+        if let Some(request) = win::update::parse_swap_args(&args[i + 1..]) {
+            win::update::run_swap_helper(request);
+        }
+        return;
+    }
+    // Neither helper mode may install the global keyboard hook or run the install plan.
     win::keys::install();
     if let Some(code) = controller::startup() {
         std::process::exit(code);

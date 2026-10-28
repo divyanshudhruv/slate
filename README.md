@@ -215,7 +215,7 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `%LOCALAPPDATA%\Burntfern\Slate\janitor.key` | DPAPI-protected key that signs the janitor payload |
 | `%LOCALAPPDATA%\Burntfern\Slate\janitor-<pid>.bin` | Windows a dead Slate owned, replayed on the next launch |
 | `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
-| `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap helper |
+| `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap staging |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |
 
 Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe
