@@ -54,6 +54,46 @@ impl Controller {
         self.reconcile_active_group();
     }
 
+    /// Moves the keyboard cursor through the all-tabs menu, wrapping at both ends.
+    pub(super) fn move_tab_menu_cursor(&mut self, delta: isize) {
+        let count = self
+            .active_group
+            .and_then(|id| self.groups.group(id))
+            .map(|group| group.tabs.len())
+            .unwrap_or(0);
+        if count == 0 {
+            self.tab_menu_cursor = None;
+            return;
+        }
+        let next = match self.tab_menu_cursor {
+            Some(ix) => (ix as isize + delta).rem_euclid(count as isize) as usize,
+            None if delta < 0 => count - 1,
+            None => 0,
+        };
+        self.tab_menu_cursor = Some(next);
+    }
+
+    /// Selects the tab the all-tabs menu cursor sits on.
+    pub(super) fn open_tab_menu_cursor(&mut self) {
+        let Some(group) = self.active_group else {
+            return;
+        };
+        let Some(ix) = self.tab_menu_cursor else {
+            return;
+        };
+        let Some(tab) = self
+            .groups
+            .group(group)
+            .and_then(|g| g.tabs.get(ix))
+            .map(|t| t.id)
+        else {
+            return;
+        };
+        self.select_tab(group, tab);
+        self.tab_menu_open = false;
+        self.tab_menu_cursor = None;
+    }
+
     pub(super) fn select_tab(&mut self, group: GroupId, tab: TabId) {
         self.groups.set_active(group, tab);
         if let Some(hwnd) = self.hwnd_of_tab(group, tab) {

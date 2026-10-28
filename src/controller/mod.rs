@@ -48,6 +48,7 @@ pub struct Controller {
     icons: HashMap<isize, Option<Arc<RenderImage>>>,
     overlay: bool,
     tab_menu_open: bool,
+    tab_menu_cursor: Option<usize>,
     picker_open: bool,
     picker_rows: Vec<PickerRow>,
     picker_picks: Vec<isize>,
@@ -117,6 +118,7 @@ impl Controller {
             icons: HashMap::new(),
             overlay: false,
             tab_menu_open: false,
+            tab_menu_cursor: None,
             picker_open: false,
             picker_rows: Vec::new(),
             picker_picks: Vec::new(),
@@ -358,6 +360,7 @@ impl Controller {
             restore_session: self.settings.restore_session,
             overlay: self.overlay,
             tab_menu_open: self.tab_menu_open,
+            tab_menu_cursor: self.tab_menu_cursor,
             picker_open: self.picker_open,
             picker_rows: self.picker_rows.clone(),
             picker_picks: self.picker_picks.clone(),
@@ -411,6 +414,7 @@ impl Controller {
         self.host_hwnd = None;
         self.overlay = false;
         self.tab_menu_open = false;
+        self.tab_menu_cursor = None;
         self.picker_open = false;
         self.picker_rows.clear();
         self.picker_cursor = None;

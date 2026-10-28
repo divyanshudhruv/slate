@@ -43,6 +43,10 @@ pub enum Cmd {
     ToggleOverlay,
     SetTabMenu(bool),
     ToggleTabMenu,
+    MoveTabMenuCursor {
+        delta: isize,
+    },
+    ConfirmTabMenuCursor,
     CloseOtherTabs {
         group: GroupId,
         tab: TabId,
@@ -162,6 +166,7 @@ pub struct HostInfo {
     pub restore_session: bool,
     pub overlay: bool,
     pub tab_menu_open: bool,
+    pub tab_menu_cursor: Option<usize>,
     pub picker_open: bool,
     pub picker_rows: Vec<PickerRow>,
     pub picker_picks: Vec<isize>,

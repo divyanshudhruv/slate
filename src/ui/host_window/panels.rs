@@ -64,6 +64,7 @@ pub(super) fn tab_overflow(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>
             ix,
             tab,
             info.active.as_ref() == Some(&tab.id),
+            info.tab_menu_cursor == Some(ix),
             icons_in_tabs,
             group,
             &controller,
@@ -482,6 +483,7 @@ fn overflow_row(
     ix: usize,
     tab: &TabInfo,
     active: bool,
+    highlighted: bool,
     icons_in_tabs: bool,
     group: Option<GroupId>,
     controller: &Entity<Controller>,
@@ -509,6 +511,7 @@ fn overflow_row(
         .text_size(text_sm)
         .text_color(if active { colors.fg } else { colors.fg_muted })
         .cursor_pointer()
+        .when(highlighted, |el| el.bg(colors.hover))
         .hover(|style| style.bg(colors.hover))
         .on_click(move |_, _w, cx| {
             ctrl.update(cx, |c, cx| {

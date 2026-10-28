@@ -45,6 +45,7 @@ impl Controller {
                     self.close_other_dropdowns();
                 }
                 self.tab_menu_open = open;
+                self.tab_menu_cursor = None;
             }
             Cmd::ToggleTabMenu => {
                 let open = !self.tab_menu_open;
@@ -52,7 +53,10 @@ impl Controller {
                     self.close_other_dropdowns();
                 }
                 self.tab_menu_open = open;
+                self.tab_menu_cursor = None;
             }
+            Cmd::MoveTabMenuCursor { delta } => self.move_tab_menu_cursor(delta),
+            Cmd::ConfirmTabMenuCursor => self.open_tab_menu_cursor(),
             Cmd::CloseOtherTabs { group, tab } => self.close_other_tabs(group, tab),
             Cmd::CloseTabsToRight { group, tab } => self.close_tabs_to_right(group, tab),
             Cmd::CloseTabsToLeft { group, tab } => self.close_tabs_to_left(group, tab),
@@ -156,6 +160,7 @@ impl Controller {
         self.picker_open = false;
         self.saved_menu_open = false;
         self.tab_menu_open = false;
+        self.tab_menu_cursor = None;
         self.tab_menu = None;
     }
 }

@@ -300,6 +300,15 @@ impl Render for HostWindow {
                     });
                     return;
                 }
+                if tab_menu && matches!(key, "up" | "down" | "enter") {
+                    cx.stop_propagation();
+                    ctrl.update(cx, |c, cx| match key {
+                        "up" => c.dispatch(Cmd::MoveTabMenuCursor { delta: -1 }, cx),
+                        "down" => c.dispatch(Cmd::MoveTabMenuCursor { delta: 1 }, cx),
+                        _ => c.dispatch(Cmd::ConfirmTabMenuCursor, cx),
+                    });
+                    return;
+                }
                 if key != "escape" {
                     return;
                 }
