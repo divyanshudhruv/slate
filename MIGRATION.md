@@ -15,7 +15,6 @@ build starts; there is nothing to run by hand.
 | `%USERPROFILE%\.burntfern\slate\install.json` | `%LOCALAPPDATA%\Burntfern\Slate\install.json` |
 | `%USERPROFILE%\.burntfern\config.json` (theme, accent) | folded into `settings.json` |
 | `slate.exe` wherever it was downloaded | `%LOCALAPPDATA%\Programs\Burntfern\Slate\slate.exe` |
-| (no shortcut) | `Slate` shortcut in the Start menu |
 
 ## What happens on the first launch
 
@@ -32,9 +31,6 @@ build starts; there is nothing to run by hand.
 6. If you ran a downloaded `slate-vX.Y.Z-x64.exe`, that copy installs itself to
    `%LOCALAPPDATA%\Programs\Burntfern\Slate\` and records the path in
    `install.json`. Later launches and updates use that copy.
-7. A `Slate` shortcut is written to
-   `%APPDATA%\Microsoft\Windows\Start Menu\Programs\`, pointing at the installed
-   copy, so Windows search finds it after the old folder is gone.
 
 ## What is not migrated
 

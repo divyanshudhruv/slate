@@ -6,7 +6,7 @@ use std::process::Command;
 
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::config;
@@ -164,9 +164,6 @@ pub fn bootstrap(source: &str) -> Result<(), String> {
         restore_backup(&backup, &canonical);
         return Err("failed to write install record".to_string());
     }
-    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
-        warn!("start menu shortcut: {err}");
-    }
     info!("bootstrap complete version {version}");
     Ok(())
 }
@@ -199,9 +196,6 @@ pub fn relocate(source: &str) -> Result<(), String> {
         pid: 0,
     }) {
         return Err("failed to write install record".to_string());
-    }
-    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
-        warn!("start menu shortcut: {err}");
     }
     Command::new(&canonical)
         .creation_flags(CREATE_NO_WINDOW.0)

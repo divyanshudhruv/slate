@@ -224,18 +224,11 @@ impl Controller {
                     crate::win::shell::info_message(
                         "Slate moved",
                         &format!(
-                            "Slate now runs from {}. A shortcut was added to the Start menu.",
+                            "Slate now runs from {}.",
                             crate::config::paths::install_dir().display()
                         ),
                     );
                     return Some(0);
-                }
-                if !crate::win::shell_link::start_menu_shortcut_exists() {
-                    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(
-                        std::path::Path::new(&exe),
-                    ) {
-                        tracing::warn!("start menu shortcut: {err}");
-                    }
                 }
                 config::save_install(&config::InstallRecord {
                     path: exe,

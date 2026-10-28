@@ -217,7 +217,6 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
 | `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap helper |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |
-| `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Slate.lnk` | Start menu shortcut to the installed copy |
 
 Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe
 to keep settings, sets, session, updates, and logs in `data\` beside it.
