@@ -98,6 +98,7 @@ impl Controller {
     pub fn new(cx: &mut Context<Self>) -> Self {
         config::ensure();
         let settings = config::load();
+        let stale_schema = config::schema_is_newer();
         let update = UpdateState::from_cached(
             crate::core::update::CURRENT_VERSION,
             settings.updates.latest.as_deref(),
@@ -164,6 +165,14 @@ impl Controller {
         dialog::push_shortcuts(&controller.settings);
         if !controller.recovered.is_empty() {
             controller.dialog = Some(Dialog::Recovery);
+        }
+        if stale_schema {
+            controller.note_error(
+                "Your settings were written by a newer Slate. Running with defaults and not \
+                 saving, so the file stays intact.",
+                None,
+                cx,
+            );
         }
         controller
     }

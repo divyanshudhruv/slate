@@ -1,10 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde_json::Value;
 
 use super::paths;
-use super::schema::{SavedSet, SavedSets, Session, Settings, SCHEMA_VERSION};
+use super::schema::{AppRule, SavedSet, SavedSets, SavedTab, Session, Settings, SCHEMA_VERSION};
+
+/// Set when a config file carries a schema newer than this build understands.
+static NEWER_SCHEMA: AtomicBool = AtomicBool::new(false);
 
 fn template_dir() -> Option<PathBuf> {
     let beside_exe = std::env::current_exe()
@@ -60,7 +63,11 @@ fn migrate_legacy(old_root: &Path, new_root: &Path) -> bool {
             if !source_is_newer(&src, &dest) {
                 continue;
             }
-            backup_into(&backups, &dest);
+            if !backup_into(&backups, &dest) {
+                tracing::warn!("could not back up {}; leaving it in place", dest.display());
+                complete = false;
+                continue;
+            }
         }
         if let Err(err) = copy_json(&src, &dest) {
             tracing::warn!("could not migrate {}: {err}", src.display());
@@ -134,8 +141,9 @@ fn merge_theme_sources(old_root: &Path, new_root: &Path) -> bool {
             return false;
         }
     }
-    if new_config.is_file() {
-        backup_into(&new_root.join("backups"), &new_config);
+    if new_config.is_file() && !backup_into(&new_root.join("backups"), &new_config) {
+        tracing::warn!("could not move {} aside", new_config.display());
+        return false;
     }
     true
 }
@@ -181,9 +189,9 @@ fn cleanup_legacy() {
     if current_exe_dir().is_some_and(|dir| same_dir(&dir, &old_app)) {
         return;
     }
-    let old_exe = old_app.join(crate::core::install::CANONICAL_NAME);
     let new_exe = paths::install_dir().join(crate::core::install::CANONICAL_NAME);
-    if old_exe.exists() && !new_exe.exists() {
+    // Only once the new install exists; until then the old tree holds the only copy of Slate.
+    if !new_exe.exists() {
         return;
     }
     if std::fs::remove_dir_all(&old_app).is_err() {
@@ -213,20 +221,25 @@ struct SetsSeed;
 
 impl Seed for AppSeed {
     fn content(&self) -> String {
-        let value = super::save::app_value(&Settings::default());
-        serde_json::to_string_pretty(&value)
-            .map(|mut s| {
-                s.push('\n');
-                s
-            })
-            .unwrap_or_else(|_| "{}\n".to_string())
+        pretty(&super::save::app_value(&Settings::default()))
     }
 }
 
 impl Seed for SetsSeed {
     fn content(&self) -> String {
-        "{ \"schema_version\": 1, \"sets\": [] }\n".to_string()
+        pretty(&SavedSets::default())
     }
+}
+
+/// The exact bytes a save would write, so a seeded file and a saved one agree.
+fn pretty(value: &impl serde::Serialize) -> String {
+    serde_json::to_string_pretty(value).map_or_else(
+        |_| "{}\n".to_string(),
+        |mut text| {
+            text.push('\n');
+            text
+        },
+    )
 }
 
 fn seed(template_rel: &str, dest: &Path, fallback: &dyn Seed) {
@@ -275,16 +288,55 @@ fn read_settings(path: &Path) -> Option<Settings> {
             return None;
         }
     };
-    if schema_version_of(&value) > SCHEMA_VERSION as u64 {
-        backup(path);
+    let version = schema_version_of(&value);
+    if version > SCHEMA_VERSION as u64 {
+        tracing::warn!(
+            "{} has schema {version}, newer than this build's {SCHEMA_VERSION}; \
+             running with defaults and leaving the file alone",
+            path.display()
+        );
+        NEWER_SCHEMA.store(true, Ordering::Relaxed);
         return None;
     }
     Some(settings_from_value(migrate(value)))
 }
 
+/// True when a config file was written by a newer Slate, so nothing may overwrite it.
+pub fn schema_is_newer() -> bool {
+    NEWER_SCHEMA.load(Ordering::Relaxed)
+}
+
 fn settings_from_value(value: Value) -> Settings {
-    let defaults = serde_json::to_value(Settings::default()).unwrap_or(Value::Null);
-    serde_json::from_value(sanitize(value, &defaults)).unwrap_or_default()
+    let sanitized = sanitize(
+        None,
+        value,
+        &serde_json::to_value(Settings::default()).unwrap_or(Value::Null),
+    );
+    match serde_json::from_value::<Settings>(sanitized.clone()) {
+        Ok(settings) => settings,
+        Err(err) => {
+            tracing::warn!("settings hold an unreadable value ({err}); keeping the rest");
+            settings_field_by_field(sanitized)
+        }
+    }
+}
+
+/// Reads one field at a time, so a single bad field cannot reset every other one.
+fn settings_field_by_field(value: Value) -> Settings {
+    let Some(map) = value.as_object() else {
+        return Settings::default();
+    };
+    let mut kept = serde_json::Map::new();
+    for (key, field) in map {
+        let mut probe = serde_json::Map::with_capacity(1);
+        probe.insert(key.clone(), field.clone());
+        if serde_json::from_value::<Settings>(Value::Object(probe)).is_ok() {
+            kept.insert(key.clone(), field.clone());
+        } else {
+            tracing::warn!("dropping unreadable settings field '{key}'");
+        }
+    }
+    serde_json::from_value(Value::Object(kept)).unwrap_or_default()
 }
 
 fn schema_version_of(value: &Value) -> u64 {
@@ -294,8 +346,8 @@ fn schema_version_of(value: &Value) -> u64 {
         .unwrap_or(0)
 }
 
-/// Drops fields whose JSON type no longer matches the schema, keeping everything else.
-fn sanitize(value: Value, default: &Value) -> Value {
+/// Drops fields and list entries whose JSON shape no longer matches the schema.
+fn sanitize(key: Option<&str>, value: Value, default: &Value) -> Value {
     match (value, default) {
         (Value::Object(mut map), Value::Object(defaults)) => {
             let keys: Vec<String> = map.keys().cloned().collect();
@@ -306,16 +358,36 @@ fn sanitize(value: Value, default: &Value) -> Value {
                 let Some(field) = map.remove(&key) else {
                     continue;
                 };
-                let fixed = sanitize(field, field_default);
+                let fixed = sanitize(Some(&key), field, field_default);
                 if !fixed.is_null() || field_default.is_null() {
                     map.insert(key, fixed);
                 }
             }
             Value::Object(map)
         }
+        (Value::Array(items), Value::Array(default)) => {
+            let template = match default.first().cloned().or_else(|| element_template(key)) {
+                Some(template) => template,
+                None => return Value::Array(items),
+            };
+            let kept = items
+                .into_iter()
+                .map(|item| sanitize(None, item, &template))
+                .filter(|item| !item.is_null() || template.is_null())
+                .collect();
+            Value::Array(kept)
+        }
         (value, Value::Null) => value,
         (value, default) if value_kind(&value) == value_kind(default) => value,
         (_, _) => Value::Null,
+    }
+}
+
+/// The shape of one entry for a list field whose default is empty.
+fn element_template(key: Option<&str>) -> Option<Value> {
+    match key {
+        Some("rules") => serde_json::to_value(AppRule::default()).ok(),
+        _ => None,
     }
 }
 
@@ -337,8 +409,14 @@ pub fn load_sets() -> SavedSets {
     };
     match serde_json::from_str::<Value>(&text) {
         Ok(value) => {
-            if schema_version_of(&value) > SCHEMA_VERSION as u64 {
-                backup(&path);
+            let version = schema_version_of(&value);
+            if version > SCHEMA_VERSION as u64 {
+                tracing::warn!(
+                    "{} has schema {version}, newer than this build's {SCHEMA_VERSION}; \
+                     leaving the file alone",
+                    path.display()
+                );
+                NEWER_SCHEMA.store(true, Ordering::Relaxed);
                 return SavedSets::default();
             }
             parse_sets(value)
@@ -355,13 +433,31 @@ pub fn load_session() -> Session {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Session::default();
     };
-    match serde_json::from_str::<Session>(&text) {
-        Ok(session) => session,
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
         Err(_) => {
             backup(&path);
-            Session::default()
+            return Session::default();
         }
+    };
+    if schema_version_of(&value) > SCHEMA_VERSION as u64 {
+        tracing::warn!("{} is newer than this build; ignoring it", path.display());
+        backup(&path);
+        return Session::default();
     }
+    parse_session(migrate(value))
+}
+
+/// Keeps the tabs that read, so one bad entry does not drop the session.
+fn parse_session(value: Value) -> Session {
+    let mut out = Session::default();
+    if let Some(items) = value.get("tabs").and_then(Value::as_array) {
+        out.tabs = items
+            .iter()
+            .filter_map(|item| serde_json::from_value::<SavedTab>(item.clone()).ok())
+            .collect();
+    }
+    out
 }
 
 fn parse_sets(value: Value) -> SavedSets {
@@ -409,14 +505,19 @@ fn migrate(mut value: Value) -> Value {
 }
 
 fn backup(path: &Path) {
-    backup_into(&paths::backups_dir(), path);
+    if !backup_into(&paths::backups_dir(), path) {
+        tracing::warn!("could not move {} aside", path.display());
+    }
 }
 
-fn backup_into(dir: &Path, path: &Path) {
+/// Moves a file aside. False means it could not be preserved.
+fn backup_into(dir: &Path, path: &Path) -> bool {
     let Some(name) = path.file_name() else {
-        return;
+        return false;
     };
-    let _ = std::fs::create_dir_all(dir);
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let stamp = std::time::SystemTime::now()
@@ -424,7 +525,15 @@ fn backup_into(dir: &Path, path: &Path) {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let dest = dir.join(format!("{}.{stamp}.{n}", name.to_string_lossy()));
-    let _ = std::fs::rename(path, dest);
+    if std::fs::rename(path, &dest).is_ok() {
+        return true;
+    }
+    // A rename can fail across a lock; a copy still keeps the bytes.
+    if std::fs::copy(path, &dest).is_err() {
+        return false;
+    }
+    let _ = std::fs::remove_file(path);
+    true
 }
 
 #[cfg(test)]
@@ -708,5 +817,92 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&old);
         let _ = std::fs::remove_dir_all(&new);
+    }
+
+    #[test]
+    fn one_bad_rule_does_not_reset_the_settings() {
+        let s = settings_from_value(serde_json::json!({
+            "theme": "dark",
+            "rules": [1, { "exe": "chrome.exe", "never_host": true }, "nope"]
+        }));
+        assert_eq!(s.theme, crate::config::ThemeMode::Dark);
+        assert_eq!(s.rules.len(), 1);
+        assert_eq!(s.rules[0].exe, "chrome.exe");
+    }
+
+    #[test]
+    fn a_field_that_still_fails_keeps_the_others() {
+        let kept = settings_field_by_field(serde_json::json!({
+            "theme": "dark",
+            "preview_delay_ms": "soon"
+        }));
+        assert_eq!(kept.theme, crate::config::ThemeMode::Dark);
+        assert_eq!(
+            kept.preview_delay_ms,
+            crate::timings::DEFAULT_PREVIEW_DELAY_MS
+        );
+    }
+
+    #[test]
+    fn a_newer_settings_file_is_left_alone() {
+        let dir = scratch("newer-schema");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        let text = format!(
+            r#"{{ "schema_version": {}, "theme": "dark" }}"#,
+            SCHEMA_VERSION + 1
+        );
+        std::fs::write(&path, &text).unwrap();
+
+        assert!(read_settings(&path).is_none());
+        assert!(schema_is_newer());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_session_keeps_the_tabs_that_read() {
+        let session = parse_session(serde_json::json!({
+            "tabs": [
+                { "exe_path": "C:\\a.exe", "exe_name": "a.exe" },
+                7,
+                { "exe_path": "C:\\b.exe", "exe_name": "b.exe" }
+            ]
+        }));
+        assert_eq!(session.tabs.len(), 2);
+        assert_eq!(session.tabs[1].exe_name, "b.exe");
+    }
+
+    #[test]
+    fn a_failed_backup_reports_failure() {
+        let blocked = scratch("backup-blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+        let source = blocked.with_extension("json");
+        std::fs::write(&source, b"{}").unwrap();
+
+        assert!(!backup_into(&blocked, &source));
+        assert!(source.exists(), "the source must survive a failed backup");
+
+        let _ = std::fs::remove_file(&source);
+        let _ = std::fs::remove_file(&blocked);
+    }
+
+    #[test]
+    fn shipped_templates_match_the_defaults() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("configs")
+            .join("slate");
+        let shipped: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            shipped,
+            crate::config::save::app_value(&Settings::default())
+        );
+
+        let shipped: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("sets.json")).unwrap()).unwrap();
+        assert_eq!(shipped, serde_json::to_value(SavedSets::default()).unwrap());
     }
 }
