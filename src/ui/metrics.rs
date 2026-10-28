@@ -5,7 +5,6 @@ pub const MENU_W_SAVED: f32 = 280.0;
 pub const MENU_W_TAB_MENU: f32 = 260.0;
 pub const ROW_H: f32 = 30.0;
 pub const PANEL_PAD: f32 = 16.0;
-pub const DIALOG_PAD: f32 = 28.0;
 
 pub const FADE_W: f32 = 40.0;
 pub const UPDATE_DOT_SIZE: f32 = 8.0;

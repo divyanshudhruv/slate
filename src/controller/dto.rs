@@ -202,7 +202,7 @@ pub struct HostInfo {
     pub saved_sets: Vec<SavedSetInfo>,
     pub saved_prompt: Option<SavedPrompt>,
     pub tab_menu: Option<TabMenu>,
-    pub renaming: Option<TabId>,
+    pub renaming: Option<(GroupId, TabId)>,
     pub picking: bool,
     pub hover_preview: Option<HoverPreview>,
     pub show_tab_bar: bool,

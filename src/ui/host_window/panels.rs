@@ -204,7 +204,7 @@ pub(super) fn picker(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
             "host-picker",
             at,
             MENU_W,
-            menu_height(info.picker_rows.len().max(1)),
+            menu_height(info.picker_rows.len() + 1),
             viewport,
             enter_animation(ctx.cx),
             panel,
@@ -278,6 +278,7 @@ pub(super) fn saved(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
             );
         }
 
+        let height = menu_height(rows.len());
         let panel = menu_panel(MENU_W_SAVED, ctx.cx).children(rows);
 
         let at = anchor.read(ctx.cx).bottom_left();
@@ -285,7 +286,7 @@ pub(super) fn saved(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
             "host-saved",
             at,
             MENU_W_SAVED,
-            menu_height(info.saved_sets.len().max(1) + 2),
+            height,
             viewport,
             enter_animation(ctx.cx),
             panel,

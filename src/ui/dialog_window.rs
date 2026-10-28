@@ -1,8 +1,7 @@
 ﻿use ely_gpui_component::feedback::InlineMessage;
 use gpui::prelude::*;
-use gpui::{div, px, App, Entity, IntoElement, Keystroke, Modifiers, Window};
+use gpui::{div, App, Entity, IntoElement, Keystroke, Modifiers, Window};
 
-use crate::ui::metrics::DIALOG_PAD;
 use ely_gpui_component::buttons::Button;
 use ely_gpui_component::forms::HotkeyInput;
 use ely_gpui_component::overlays::Dialog;
@@ -28,70 +27,62 @@ fn recovery_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElemen
     let theme = cx.theme();
     let count = controller.read(cx).recovered_count();
     let title = if count == 1 {
-        "Restore last window?".to_string()
+        "Restore last window?"
     } else {
-        "Restore last session?".to_string()
+        "Restore last session?"
     };
     let note = if count == 1 {
         "Slate closed unexpectedly and freed one window. Open it as a tab again?".to_string()
     } else {
         format!("Slate closed unexpectedly and freed {count} windows. Open them as tabs again?")
     };
-    let restore = {
-        let ctrl = controller.clone();
-        move |_ev: &gpui::ClickEvent, _w: &mut Window, cx: &mut App| {
-            ctrl.update(cx, |c, cx| c.dispatch(Cmd::RestoreRecovered, cx));
-        }
-    };
-    let dismiss = {
-        let ctrl = controller.clone();
-        move |_ev: &gpui::ClickEvent, _w: &mut Window, cx: &mut App| {
-            ctrl.update(cx, |c, cx| c.dispatch(Cmd::DismissRecovered, cx));
-        }
-    };
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .p(px(DIALOG_PAD))
-        .child(
-            Icon::new(IconName::Archive)
-                .size(IconSize::Lg)
-                .color(theme.colors.accent),
-        )
-        .child(
-            div()
-                .text_size(theme.text_size(TextSize::Xl))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(theme.colors.fg)
-                .child(title),
-        )
-        .child(
-            div()
-                .text_size(theme.text_size(TextSize::Sm))
-                .text_color(theme.colors.fg_muted)
-                .child(note),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .mt_2()
-                .child(
-                    Button::new("rec-later", "Not now")
-                        .variant(ely_gpui_component::buttons::ButtonVariant::Ghost)
-                        .on_click(dismiss),
-                )
-                .child(
-                    Button::new("rec-now", "Restore")
-                        .primary()
-                        .on_click(restore),
-                ),
-        )
-        .into_any_element()
+
+    let ctrl_close = controller.clone();
+    let mut dialog = Dialog::new("slate-recovery", title, move |_window, cx| {
+        ctrl_close.update(cx, |c, cx| c.dispatch(Cmd::DismissRecovered, cx));
+    });
+    dialog = dialog.child(
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .child(
+                Icon::new(IconName::Archive)
+                    .size(IconSize::Lg)
+                    .color(theme.colors.accent),
+            )
+            .child(
+                div()
+                    .text_size(theme.text_size(TextSize::Sm))
+                    .text_color(theme.colors.fg_muted)
+                    .child(note),
+            ),
+    );
+
+    let ctrl_later = controller.clone();
+    dialog = dialog.action(move |close| {
+        let ctrl = ctrl_later.clone();
+        Button::new("rec-later", "Not now")
+            .variant(ely_gpui_component::buttons::ButtonVariant::Ghost)
+            .on_click(move |_ev, window, cx| {
+                ctrl.update(cx, |c, cx| c.dispatch(Cmd::DismissRecovered, cx));
+                close(window, cx);
+            })
+    });
+
+    let ctrl_restore = controller.clone();
+    dialog = dialog.action(move |close| {
+        let ctrl = ctrl_restore.clone();
+        Button::new("rec-now", "Restore")
+            .primary()
+            .on_click(move |_ev, window, cx| {
+                ctrl.update(cx, |c, cx| c.dispatch(Cmd::RestoreRecovered, cx));
+                close(window, cx);
+            })
+    });
+
+    dialog.into_any_element()
 }
 
 fn stroke_of(chord: Chord) -> Option<Keystroke> {

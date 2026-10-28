@@ -412,7 +412,7 @@ impl Controller {
                 .collect(),
             saved_prompt: self.saved_prompt,
             tab_menu: self.tab_menu.clone(),
-            renaming: self.renaming.map(|(_, tab)| tab),
+            renaming: self.renaming,
             picking: self.picking,
             hover_preview: self.hover_preview.clone(),
             show_tab_bar: self.settings.tabs.show_bar,

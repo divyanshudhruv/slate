@@ -543,7 +543,7 @@ impl Render for HostWindow {
         if let Some(dialog) = super::dialog_window::in_host_dialog(&controller, cx) {
             content = content.child(dialog);
         }
-        if let Some(dialog) = self.rename_dialog(window, cx, info.as_ref(), group) {
+        if let Some(dialog) = self.rename_dialog(window, cx, info.as_ref()) {
             content = content.child(dialog);
         }
         if let Some(dialog) = self.saved_dialog(window, cx, info.as_ref()) {

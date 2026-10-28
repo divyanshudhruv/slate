@@ -13,7 +13,7 @@ use gpui::{
 use super::overlays::{enter_animation, overlay_layer, MENU_W_TAB_MENU};
 use super::panels;
 use super::HostCtx;
-use crate::controller::{Cmd, Controller, HostInfo};
+use crate::controller::{BannerAction, Cmd, Controller, HostInfo};
 use crate::core::update::UpdateState;
 use crate::ui::tab_bar::SlateTabBar;
 
@@ -137,7 +137,7 @@ fn update_state(state: &UpdateState) -> (IconName, bool, bool) {
 }
 
 fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
-    let (update_icon, update_disabled, _) = update_state(&info.update);
+    let (update_icon, update_disabled, update_available) = update_state(&info.update);
     let shortcuts_menu = Menu::new()
         .item(
             MenuItem::new("Next tab")
@@ -211,8 +211,12 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
             MenuItem::new(info.update_label.clone())
                 .icon(update_icon)
                 .disabled(update_disabled)
-                .on_click(overlay_action(controller, || Cmd::CheckForUpdates {
-                    force: true,
+                .on_click(overlay_action(controller, move || {
+                    if update_available {
+                        Cmd::BannerAction(BannerAction::InstallUpdate)
+                    } else {
+                        Cmd::CheckForUpdates { force: true }
+                    }
                 })),
         )
         .item(

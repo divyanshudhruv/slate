@@ -4,7 +4,6 @@ use gpui::{AnyElement, AppContext, Context, IntoElement, SharedString, Window};
 
 use super::HostWindow;
 use crate::controller::{Cmd, HostInfo, SavedPrompt};
-use crate::core::GroupId;
 
 impl HostWindow {
     pub(super) fn rename_dialog(
@@ -12,11 +11,10 @@ impl HostWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
         info: &HostInfo,
-        group: Option<GroupId>,
     ) -> Option<AnyElement> {
-        let (tab_id, group) = match (info.renaming, group) {
-            (Some(tab_id), Some(group)) => (tab_id, group),
-            _ => {
+        let (group, tab_id) = match info.renaming {
+            Some(pair) => pair,
+            None => {
                 self.rename_primed = None;
                 return None;
             }
