@@ -6,6 +6,7 @@ use gpui::{div, px, AnimationExt, App, Pixels, Size, Window};
 
 use super::overlays::enter_animation;
 use crate::controller::{HoverPreview, TabInfo};
+use crate::ui::metrics::{CARD_GAP, CARD_IMAGE_H, CARD_MARGIN, CARD_W};
 
 pub(crate) fn hover_card(
     cx: &App,
@@ -14,11 +15,9 @@ pub(crate) fn hover_card(
     viewport: Size<Pixels>,
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> gpui::AnyElement {
-    const CARD_W: f32 = 224.0;
-    const IMAGE_H: f32 = 126.0;
-    const CARD_H: f32 = IMAGE_H + 40.0;
-    const MARGIN: f32 = 8.0;
-    const GAP: f32 = 6.0;
+    const CARD_H: f32 = CARD_IMAGE_H + 40.0;
+    const MARGIN: f32 = CARD_MARGIN;
+    const GAP: f32 = CARD_GAP;
     let theme = cx.theme();
     let colors = &theme.colors;
     let rad_lg = theme.radius(Radius::Lg);
@@ -36,11 +35,11 @@ pub(crate) fn hover_card(
         Some(img) => Image::new(("host-hover-shot", 0usize), img)
             .rounded_t(rad_lg)
             .w_full()
-            .h(px(IMAGE_H))
+            .h(px(CARD_IMAGE_H))
             .into_any_element(),
         None => div()
             .w_full()
-            .h(px(IMAGE_H))
+            .h(px(CARD_IMAGE_H))
             .rounded_t(rad_lg)
             .flex()
             .items_center()

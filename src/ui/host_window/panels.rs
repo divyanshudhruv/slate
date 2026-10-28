@@ -18,12 +18,9 @@ use super::HostCtx;
 use crate::controller::{Cmd, Controller, PickerRow, SavedSetInfo, TabInfo};
 use crate::core::{GroupId, TabId};
 
-const SWATCH_H: f32 = 4.0;
-const SWATCH_H_ACTIVE: f32 = 7.0;
-const BADGE_SIZE: f32 = 11.0;
-const BADGE_PAD_X: f32 = 2.0;
-const BADGE_FONT: f32 = 8.5;
-const BADGE_OFFSET: f32 = -3.0;
+use crate::ui::metrics::{
+    BADGE_FONT, BADGE_OFFSET, BADGE_PAD_X, BADGE_SIZE, SWATCH_H, SWATCH_H_ACTIVE,
+};
 
 pub(super) fn tab_overflow(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
     let group = ctx.group;
@@ -60,16 +57,11 @@ pub(super) fn tab_overflow(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>
     });
 
     let rows = info.tabs.iter().enumerate().map(|(ix, tab)| {
-        overflow_row(
-            ix,
-            tab,
-            info.active.as_ref() == Some(&tab.id),
-            info.tab_menu_cursor == Some(ix),
-            icons_in_tabs,
-            group,
-            &controller,
-            ctx.cx,
-        )
+        let marks = RowMarks {
+            active: info.active.as_ref() == Some(&tab.id),
+            highlighted: info.tab_menu_cursor == Some(ix),
+        };
+        overflow_row(ix, tab, marks, icons_in_tabs, group, &controller, ctx.cx)
     });
 
     let empty_row = info.tabs.is_empty().then(|| {
@@ -479,11 +471,16 @@ fn tab_badge(count: usize, cx: &App) -> Div {
         .child(label)
 }
 
+/// Which row of the all-tabs menu is current, and whether it sits under the keyboard cursor.
+struct RowMarks {
+    active: bool,
+    highlighted: bool,
+}
+
 fn overflow_row(
     ix: usize,
     tab: &TabInfo,
-    active: bool,
-    highlighted: bool,
+    marks: RowMarks,
     icons_in_tabs: bool,
     group: Option<GroupId>,
     controller: &Entity<Controller>,
@@ -494,6 +491,10 @@ fn overflow_row(
     let icon_px = theme.icon_size(IconSize::Sm).to_pixels(theme.base_rem());
     let rad_sm = theme.radius(Radius::Sm);
     let (text_sm, text_xs) = (theme.text_size(TextSize::Sm), theme.text_size(TextSize::Xs));
+    let RowMarks {
+        active,
+        highlighted,
+    } = marks;
     let (app, exe, icon) = (&tab.app, &tab.exe, &tab.icon);
     let tab_id = tab.id;
     let ctrl = controller.clone();

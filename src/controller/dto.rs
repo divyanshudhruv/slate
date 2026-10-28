@@ -235,11 +235,16 @@ pub struct HoverPreview {
     pub image: Option<Arc<RenderImage>>,
 }
 
+/// Long enough to read, short enough to stay out of the way.
+const TOAST_STAY_INFO_MS: u64 = 4_000;
+/// Errors linger so a message is not missed.
+const TOAST_STAY_ERROR_MS: u64 = 7_000;
+
 pub(super) fn pick_toast() -> Toast {
     Toast::new("Add a window")
         .severity(Severity::Info)
         .body("Hover a window - press TAB to add - Esc to cancel")
-        .stay(Some(Duration::from_secs(4)))
+        .stay(Some(Duration::from_millis(TOAST_STAY_INFO_MS)))
 }
 
 pub(super) fn update_toast(
@@ -247,10 +252,14 @@ pub(super) fn update_toast(
     severity: Severity,
     body: impl Into<SharedString>,
 ) -> Toast {
+    let stay = match severity {
+        Severity::Danger => TOAST_STAY_ERROR_MS,
+        _ => TOAST_STAY_INFO_MS,
+    };
     Toast::new(title)
         .severity(severity)
         .body(body)
-        .stay(Some(Duration::from_secs(5)))
+        .stay(Some(Duration::from_millis(stay)))
 }
 
 pub(super) fn app_name(exe_name: &str) -> String {

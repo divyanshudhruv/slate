@@ -1,5 +1,6 @@
 pub mod dialog_window;
 pub mod host_window;
+pub(crate) mod metrics;
 pub mod tab_bar;
 
 pub use host_window::HostWindow;

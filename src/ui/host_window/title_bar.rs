@@ -17,10 +17,7 @@ use crate::controller::{Cmd, Controller, HostInfo};
 use crate::core::update::UpdateState;
 use crate::ui::tab_bar::SlateTabBar;
 
-const FADE_W: f32 = 40.0;
-const UPDATE_DOT_SIZE: f32 = 8.0;
-const UPDATE_DOT_INSET: f32 = 4.0;
-const CONTROLS_RESERVE_W: f32 = 64.0;
+use crate::ui::metrics::{CONTROLS_RESERVE_W, FADE_W, UPDATE_DOT_INSET, UPDATE_DOT_SIZE};
 
 pub(super) struct TitleBar {
     pub element: AnyElement,

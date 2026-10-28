@@ -17,6 +17,10 @@ const TRAY_UID: u32 = 1;
 const TRAY_MSG: u32 = WM_APP + 1;
 const CMD_SHOW: i32 = 1;
 const CMD_EXIT: i32 = 2;
+const TRAY_ICON_PX: u32 = 32;
+const TRAY_TIP: &str = "Slate";
+const TRAY_SHOW_LABEL: &str = "Show Slate";
+const TRAY_EXIT_LABEL: &str = "Exit";
 
 static HOST: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
@@ -32,7 +36,7 @@ fn notify_data(hwnd: HWND, icon: HICON) -> NOTIFYICONDATAW {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = TRAY_MSG;
     nid.hIcon = icon;
-    let tip = to_wide("Slate");
+    let tip = to_wide(TRAY_TIP);
     let n = tip.len().min(nid.szTip.len());
     nid.szTip[..n].copy_from_slice(&tip[..n]);
     nid
@@ -56,8 +60,8 @@ unsafe fn show_menu(hwnd: HWND) {
             Ok(menu) => menu,
             Err(_) => return,
         };
-        let show = to_wide("Show Slate");
-        let exit = to_wide("Exit");
+        let show = to_wide(TRAY_SHOW_LABEL);
+        let exit = to_wide(TRAY_EXIT_LABEL);
         let _ = windows::Win32::UI::WindowsAndMessaging::AppendMenuW(
             menu,
             MF_STRING,
@@ -156,7 +160,7 @@ impl TrayIcon {
                 None,
             )
             .ok()?;
-            let icon = icon::app_hicon(32)
+            let icon = icon::app_hicon(TRAY_ICON_PX)
                 .map(|p| HICON(p as *mut _))
                 .unwrap_or(HICON(std::ptr::null_mut()));
             let nid = notify_data(hwnd, icon);

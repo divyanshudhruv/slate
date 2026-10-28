@@ -1,11 +1,12 @@
 use gpui::prelude::*;
 use gpui::{div, px, App, Entity, IntoElement, Keystroke, Modifiers, Window};
 
+use crate::ui::metrics::DIALOG_PAD;
 use ely_gpui_component::buttons::Button;
 use ely_gpui_component::forms::HotkeyInput;
 use ely_gpui_component::overlays::Dialog;
 use ely_gpui_component::primitives::{Icon, IconName};
-use ely_gpui_component::theme::{ActiveTheme, IconSize};
+use ely_gpui_component::theme::{ActiveTheme, IconSize, TextSize};
 
 use crate::controller::{Cmd, Controller, Dialog as SlateDialog};
 use crate::core::keys::{self, Chord, KeyAction, ACTIONS};
@@ -55,7 +56,7 @@ fn recovery_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElemen
         .items_center()
         .justify_center()
         .gap_2()
-        .p(px(28.0))
+        .p(px(DIALOG_PAD))
         .child(
             Icon::new(IconName::Archive)
                 .size(IconSize::Lg)
@@ -63,14 +64,14 @@ fn recovery_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElemen
         )
         .child(
             div()
-                .text_size(px(18.0))
+                .text_size(theme.text_size(TextSize::Xl))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(theme.colors.fg)
                 .child(title),
         )
         .child(
             div()
-                .text_size(px(13.0))
+                .text_size(theme.text_size(TextSize::Sm))
                 .text_color(theme.colors.fg_muted)
                 .child(note),
         )
@@ -171,13 +172,13 @@ fn keybinds_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElemen
                         .min_w_0()
                         .child(
                             div()
-                                .text_size(px(14.0))
+                                .text_size(theme.text_size(TextSize::Md))
                                 .text_color(theme.colors.fg)
                                 .child(label),
                         )
                         .child(
                             div()
-                                .text_size(px(11.0))
+                                .text_size(theme.text_size(TextSize::Xs))
                                 .text_color(theme.colors.fg_muted)
                                 .child(desc),
                         ),
@@ -261,7 +262,7 @@ fn update_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElement 
         .items_center()
         .justify_center()
         .gap_2()
-        .p(px(28.0))
+        .p(px(DIALOG_PAD))
         .when(available, |card| {
             card.child(
                 Icon::new(IconName::Download)
@@ -272,14 +273,14 @@ fn update_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElement 
         })
         .child(
             div()
-                .text_size(px(18.0))
+                .text_size(theme.text_size(TextSize::Xl))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(theme.colors.fg)
                 .child(title),
         )
         .child(
             div()
-                .text_size(px(13.0))
+                .text_size(theme.text_size(TextSize::Sm))
                 .text_color(theme.colors.fg_muted)
                 .child(note),
         )

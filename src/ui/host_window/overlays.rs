@@ -9,12 +9,8 @@ use gpui::{
 
 pub(super) type Action = Rc<dyn Fn(&mut Window, &mut App)>;
 
-pub(super) const MENU_W: f32 = 300.0;
-pub(super) const MENU_W_SAVED: f32 = 280.0;
-pub(super) const MENU_W_TAB_MENU: f32 = 260.0;
-
-const ROW_H: f32 = 30.0;
-const PANEL_PAD: f32 = 16.0;
+pub(super) use crate::ui::metrics::{MENU_W, MENU_W_SAVED, MENU_W_TAB_MENU};
+use crate::ui::metrics::{PANEL_PAD, ROW_H};
 
 pub(super) fn menu_panel(width: f32, cx: &App) -> Div {
     let theme = cx.theme();
