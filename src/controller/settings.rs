@@ -76,17 +76,17 @@ impl Controller {
     }
 
     fn resolve_mode(&self, system: Mode) -> Mode {
-        match self.settings.theme.as_str() {
-            "dark" => Mode::Dark,
-            "light" => Mode::Light,
-            _ => system,
+        match self.settings.theme {
+            config::ThemeMode::Dark => Mode::Dark,
+            config::ThemeMode::Light => Mode::Light,
+            config::ThemeMode::System => system,
         }
     }
 
     /// Keeps both modes' palettes wearing the chosen accent, so a mode switch never falls back to Ely's own.
     fn apply_accent(&self, cx: &mut Context<Self>) {
         let contrast = cx.theme().high_contrast();
-        let index = accent_hue(&self.settings.accent);
+        let index = accent_hue(self.settings.accent.name());
         for mode in [Mode::Light, Mode::Dark] {
             let palette = index.map(|index| {
                 let mut palette = match mode {
@@ -104,12 +104,7 @@ impl Controller {
     }
 
     pub(super) fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        let next = match self.settings.theme.as_str() {
-            "system" => "dark",
-            "dark" => "light",
-            _ => "system",
-        };
-        self.settings.theme = next.to_string();
+        self.settings.theme = self.settings.theme.next();
         self.apply_theme(cx);
         self.save_settings();
     }

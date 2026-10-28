@@ -343,7 +343,7 @@ impl Controller {
             icons_in_tabs: self.settings.tabs.icons,
             show_tab_badge: self.settings.tabs.count_badge,
             hover_preview_enabled: self.settings.tabs.hover_preview,
-            theme: SharedString::from(self.settings.theme.clone()),
+            theme: SharedString::from(self.settings.theme.as_str()),
             restore_session: self.settings.restore_session,
             overlay: self.overlay,
             tab_menu_open: self.tab_menu_open,

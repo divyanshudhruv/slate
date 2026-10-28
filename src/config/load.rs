@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 
 use super::paths;
-use super::schema::{SavedSet, SavedSets, Session, Settings, SCHEMA_VERSION};
+use super::schema::{Accent, SavedSet, SavedSets, Session, Settings, ThemeMode, SCHEMA_VERSION};
 
 #[derive(Debug, Default)]
 struct PartialSettings {
-    theme: Option<String>,
-    accent: Option<String>,
+    theme: Option<ThemeMode>,
+    accent: Option<Accent>,
     restore_session: Option<bool>,
     preview_delay_ms: Option<u64>,
     tabs: Option<PartialTabs>,
@@ -390,8 +390,8 @@ fn schema_version_of(value: &Value) -> u64 {
 
 fn partial_from_value(value: Value) -> PartialSettings {
     let mut partial = PartialSettings {
-        theme: str_field(&value, "theme"),
-        accent: str_field(&value, "accent"),
+        theme: typed_field(&value, "theme"),
+        accent: typed_field(&value, "accent"),
         restore_session: bool_field(&value, "restore_session"),
         preview_delay_ms: value.get("preview_delay_ms").and_then(Value::as_u64),
         ..PartialSettings::default()
@@ -423,6 +423,10 @@ fn partial_from_value(value: Value) -> PartialSettings {
 
 fn str_field(value: &Value, key: &str) -> Option<String> {
     value.get(key)?.as_str().map(|s| s.to_string())
+}
+
+fn typed_field<T: serde::de::DeserializeOwned>(value: &Value, key: &str) -> Option<T> {
+    serde_json::from_value(value.get(key)?.clone()).ok()
 }
 
 fn bool_field(value: &Value, key: &str) -> Option<bool> {
@@ -524,7 +528,7 @@ mod tests {
         apply(
             &mut s,
             PartialSettings {
-                theme: Some("dark".into()),
+                theme: Some(ThemeMode::Dark),
                 accent: None,
                 restore_session: None,
                 preview_delay_ms: None,
@@ -538,8 +542,8 @@ mod tests {
                 keybinds: None,
             },
         );
-        assert_eq!(s.theme, "dark");
-        assert_eq!(s.accent, "blue");
+        assert_eq!(s.theme, ThemeMode::Dark);
+        assert_eq!(s.accent.name(), "blue");
         assert!(!s.tabs.icons);
         assert!(s.tabs.count_badge);
     }
@@ -565,12 +569,12 @@ mod tests {
     fn settings_partial_reads_theme_and_accent() {
         let value = serde_json::json!({
             "theme": "dark",
-            "accent": "red",
+            "accent": "Rose",
             "tabs": { "icons": false }
         });
         let partial = partial_from_value(value);
-        assert_eq!(partial.theme.as_deref(), Some("dark"));
-        assert_eq!(partial.accent.as_deref(), Some("red"));
+        assert_eq!(partial.theme, Some(ThemeMode::Dark));
+        assert_eq!(partial.accent.as_ref().map(Accent::name), Some("Rose"));
         assert_eq!(partial.tabs.and_then(|t| t.icons), Some(false));
     }
 
@@ -578,12 +582,12 @@ mod tests {
     fn wrong_typed_key_does_not_drop_the_rest() {
         let value = serde_json::json!({
             "theme": 123,
-            "accent": "red",
+            "accent": "Rose",
             "tabs": { "icons": "yes", "count_badge": false }
         });
         let partial = partial_from_value(value);
         assert!(partial.theme.is_none());
-        assert_eq!(partial.accent.as_deref(), Some("red"));
+        assert_eq!(partial.accent.as_ref().map(Accent::name), Some("Rose"));
         let tabs = partial.tabs.unwrap();
         assert_eq!(tabs.icons, None);
         assert_eq!(tabs.count_badge, Some(false));

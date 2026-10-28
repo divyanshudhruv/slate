@@ -11,7 +11,7 @@ use super::schema::{AppSettings, SavedSets, Session, Settings, SCHEMA_VERSION};
 pub(crate) fn app_value(settings: &Settings) -> Value {
     serde_json::to_value(AppSettings {
         schema_version: SCHEMA_VERSION,
-        theme: &settings.theme,
+        theme: settings.theme,
         accent: &settings.accent,
         restore_session: settings.restore_session,
         preview_delay_ms: settings.preview_delay_ms,

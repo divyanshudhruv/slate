@@ -8,10 +8,10 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct Settings {
     #[serde(default = "schema_version")]
     pub schema_version: u32,
-    #[serde(default = "theme_default")]
-    pub theme: String,
-    #[serde(default = "accent_default")]
-    pub accent: String,
+    #[serde(default)]
+    pub theme: ThemeMode,
+    #[serde(default)]
+    pub accent: Accent,
     #[serde(default = "yes")]
     pub restore_session: bool,
     #[serde(default = "preview_delay_default")]
@@ -22,6 +22,87 @@ pub struct Settings {
     pub updates: Updates,
     #[serde(default)]
     pub keybinds: Keybinds,
+    /// Keys Slate does not know yet, kept so a hand edit or a newer build survives a save.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// How the host picks its palette; unknown values warn and fall back to the system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::System => Self::Dark,
+            Self::Dark => Self::Light,
+            Self::Light => Self::System,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ThemeMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Ok(match text.to_ascii_lowercase().as_str() {
+            "light" => Self::Light,
+            "dark" => Self::Dark,
+            "system" => Self::System,
+            other => {
+                tracing::warn!("unknown theme '{other}', using system");
+                Self::System
+            }
+        })
+    }
+}
+
+/// A named accent from the theme's hue palette; unknown names warn and fall back to blue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Accent(String);
+
+impl Default for Accent {
+    fn default() -> Self {
+        Self("blue".to_string())
+    }
+}
+
+impl Accent {
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+
+    fn accepts(name: &str) -> bool {
+        name.eq_ignore_ascii_case("none")
+            || ely_gpui_component::theme::HUE_NAMES
+                .iter()
+                .any(|hue| hue.eq_ignore_ascii_case(name))
+    }
+}
+
+impl<'de> Deserialize<'de> for Accent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        if Self::accepts(&text) {
+            return Ok(Self(text));
+        }
+        tracing::warn!("unknown accent '{text}', using blue");
+        Ok(Self::default())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,13 +132,14 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
-            theme: theme_default(),
-            accent: accent_default(),
+            theme: ThemeMode::default(),
+            accent: Accent::default(),
             restore_session: true,
             preview_delay_ms: preview_delay_default(),
             tabs: Tabs::default(),
             updates: Updates::default(),
             keybinds: Keybinds::default(),
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -188,18 +270,6 @@ impl Keybinds {
     }
 }
 
-#[derive(Serialize)]
-pub struct AppSettings<'a> {
-    pub schema_version: u32,
-    pub theme: &'a str,
-    pub accent: &'a str,
-    pub restore_session: bool,
-    pub preview_delay_ms: u64,
-    pub tabs: &'a Tabs,
-    pub updates: &'a Updates,
-    pub keybinds: &'a Keybinds,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Session {
     #[serde(default)]
@@ -225,12 +295,6 @@ impl Default for SavedSets {
 
 fn schema_version() -> u32 {
     SCHEMA_VERSION
-}
-fn theme_default() -> String {
-    "system".to_string()
-}
-fn accent_default() -> String {
-    "blue".to_string()
 }
 fn preview_delay_default() -> u64 {
     crate::timings::DEFAULT_PREVIEW_DELAY_MS
@@ -262,6 +326,14 @@ mod tests {
         assert_eq!(back.theme, s.theme);
         assert_eq!(back.tabs.icons, s.tabs.icons);
         assert_eq!(back.keybinds, s.keybinds);
+    }
+
+    #[test]
+    fn unknown_theme_and_accent_fall_back() {
+        let back: Settings =
+            serde_json::from_str(r#"{ "theme": "drak", "accent": "tangerine" }"#).unwrap();
+        assert_eq!(back.theme, ThemeMode::System);
+        assert_eq!(back.accent.name(), "blue");
     }
 
     #[test]
