@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -6,7 +6,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetForegroundWindow, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
-    KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
+    WM_SYSKEYUP,
 };
 
 use crate::core::keys::Chord;
@@ -145,6 +146,25 @@ pub fn set_owned(hwnds: impl IntoIterator<Item = isize>) {
     owned().set(hwnds);
 }
 
+/// One bit per virtual key, so a held chord fires once and auto-repeat is dropped.
+static HELD_KEYS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+
+fn key_bit(vk: u16) -> (usize, u64) {
+    let word = (vk / 64) as usize;
+    (word.min(3), 1u64 << (vk % 64))
+}
+
+/// Returns true when the key was already down, which means this is an auto-repeat.
+fn key_down(vk: u16) -> bool {
+    let (word, bit) = key_bit(vk);
+    HELD_KEYS[word].fetch_or(bit, Ordering::AcqRel) & bit != 0
+}
+
+fn key_up(vk: u16) {
+    let (word, bit) = key_bit(vk);
+    HELD_KEYS[word].fetch_and(!bit, Ordering::AcqRel);
+}
+
 fn held(key: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(key.0 as i32) < 0 }
 }
@@ -248,14 +268,19 @@ fn take_all() -> Vec<Shortcut> {
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code >= 0 {
         let message = wparam.0 as u32;
-        if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
-            let keyboard = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-            let vk = keyboard.vkCode as u16;
+        let keyboard = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        let vk = keyboard.vkCode as u16;
+        if message == WM_KEYUP || message == WM_SYSKEYUP {
+            key_up(vk);
+        } else if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
+            let repeat = key_down(vk);
             let alt_held = keyboard.flags.0 & LLKHF_ALTDOWN.0 != 0;
             if let Some(shortcut) = match_shortcut(vk, alt_held) {
                 let foreground = unsafe { GetForegroundWindow() }.0 as isize;
                 if owned().contains(foreground) {
-                    push(shortcut);
+                    if !repeat {
+                        push(shortcut);
+                    }
                     return LRESULT(1);
                 }
             }
@@ -340,6 +365,15 @@ mod tests {
     #[test]
     fn invalid_chords_are_not_packed() {
         assert!(Binding::new(Shortcut::NextTab, chord(0, false, false)).is_none());
+    }
+
+    #[test]
+    fn repeats_are_reported_once_until_the_key_lifts() {
+        assert!(!key_down(0x41));
+        assert!(key_down(0x41));
+        key_up(0x41);
+        assert!(!key_down(0x41));
+        key_up(0x41);
     }
 
     #[test]
