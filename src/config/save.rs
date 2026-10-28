@@ -21,15 +21,10 @@ pub fn save(settings: &Settings) -> io::Result<()> {
 }
 
 pub fn save_sets(sets: &SavedSets) -> io::Result<()> {
-    save_sets_at(&paths::sets_path(), sets)
-}
-
-/// Writes a set list anywhere, so export uses the same atomic path as the live file.
-pub fn save_sets_at(path: &Path, sets: &SavedSets) -> io::Result<()> {
     std::fs::create_dir_all(paths::data_dir())?;
     let mut text = serde_json::to_string_pretty(sets).map_err(io::Error::other)?;
     text.push('\n');
-    atomic_write(path, text.as_bytes())
+    atomic_write(&paths::sets_path(), text.as_bytes())
 }
 
 pub fn save_session(session: &Session) -> io::Result<()> {

@@ -258,25 +258,9 @@ pub(super) fn saved(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
 
     let overlay = info.saved_menu_open.then(|| {
         let save_enabled = !info.tabs.is_empty();
-        let mut rows: Vec<AnyElement> = Vec::with_capacity(info.saved_sets.len() + 2);
+        let mut rows: Vec<AnyElement> = Vec::with_capacity(info.saved_sets.len() + 1);
 
         rows.push(saved_save_row(save_enabled, &controller, ctx.cx));
-        rows.push(saved_action_row(
-            "saved-import",
-            "Import sets\u{2026}",
-            IconName::Download,
-            Cmd::ImportSets,
-            &controller,
-            ctx.cx,
-        ));
-        rows.push(saved_action_row(
-            "saved-export",
-            "Export sets\u{2026}",
-            IconName::Upload,
-            Cmd::ExportSets,
-            &controller,
-            ctx.cx,
-        ));
         for set in info.saved_sets.iter() {
             rows.push(saved_set_row(set, &controller, ctx.cx));
         }
@@ -737,43 +721,6 @@ fn saved_save_row(save_enabled: bool, controller: &Entity<Controller>, cx: &App)
                 .color(colors.fg_subtle),
         )
         .child(div().flex_1().min_w_0().child("Save current tabs\u{2026}"))
-        .into_any_element()
-}
-
-fn saved_action_row(
-    id: &'static str,
-    label: &'static str,
-    icon: IconName,
-    cmd: Cmd,
-    controller: &Entity<Controller>,
-    cx: &App,
-) -> AnyElement {
-    let theme = cx.theme();
-    let colors = &theme.colors;
-    let (rad_sm, text_sm) = (theme.radius(Radius::Sm), theme.text_size(TextSize::Sm));
-    div()
-        .id(id)
-        .role(Role::MenuItem)
-        .aria_label(label)
-        .flex()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px_2()
-        .py_1()
-        .rounded(rad_sm)
-        .text_size(text_sm)
-        .text_color(colors.fg)
-        .cursor_pointer()
-        .hover(|style| style.bg(colors.hover))
-        .on_click({
-            let ctrl = controller.clone();
-            move |_, _w, cx| {
-                ctrl.update(cx, |c, cx| c.dispatch(cmd.clone(), cx));
-            }
-        })
-        .child(Icon::new(icon).size(IconSize::Sm).color(colors.fg_subtle))
-        .child(div().flex_1().min_w_0().child(label))
         .into_any_element()
 }
 
