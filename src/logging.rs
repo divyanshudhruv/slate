@@ -8,6 +8,30 @@ static GUARD: std::sync::OnceLock<WorkerGuard> = std::sync::OnceLock::new();
 
 const MAX_LOG_FILES: usize = 7;
 
+/// The newest log file's last `limit` lines, for the diagnostics bundle.
+pub fn tail(limit: usize) -> String {
+    let dir = log_dir();
+    let newest = std::fs::read_dir(&dir).ok().and_then(|entries| {
+        entries
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "log"))
+            .filter_map(|entry| {
+                let stamp = entry.metadata().ok()?.modified().ok()?;
+                Some((stamp, entry.path()))
+            })
+            .max_by_key(|(stamp, _)| *stamp)
+            .map(|(_, path)| path)
+    });
+    let Some(path) = newest else {
+        return "(no logs yet)".to_string();
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return "(log unreadable)".to_string();
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(limit)..].join("\n")
+}
+
 fn log_dir() -> PathBuf {
     #[cfg(windows)]
     {

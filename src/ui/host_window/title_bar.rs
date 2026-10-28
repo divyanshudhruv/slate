@@ -220,6 +220,11 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
                 .on_click(overlay_action(controller, || Cmd::OpenSlateFolder)),
         )
         .item(
+            MenuItem::new("Copy diagnostics")
+                .icon(IconName::Copy)
+                .on_click(overlay_action(controller, || Cmd::CopyDiagnostics)),
+        )
+        .item(
             MenuItem::new("Reload settings")
                 .icon(IconName::RefreshCw)
                 .on_click(overlay_action(controller, || Cmd::ReloadSettings)),

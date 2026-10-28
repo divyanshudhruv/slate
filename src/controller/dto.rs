@@ -106,6 +106,7 @@ pub enum Cmd {
     },
     ExportSets,
     ImportSets,
+    CopyDiagnostics,
     ToggleTabBadge,
     ToggleHoverPreview,
     ToggleTheme,

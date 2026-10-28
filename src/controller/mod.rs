@@ -497,6 +497,42 @@ impl Controller {
         self.recovered.len()
     }
 
+    /// Builds a support report and puts it on the clipboard, so users paste instead of hunting folders.
+    pub(super) fn copy_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let mut out = String::new();
+        out.push_str(&format!("Slate {}\n", crate::core::update::CURRENT_VERSION));
+        out.push_str(&format!(
+            "OS: {} {} / schema {}\n",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            crate::config::SCHEMA_VERSION
+        ));
+        out.push_str(&format!(
+            "Data: {}\n",
+            crate::config::paths::data_dir().display()
+        ));
+        out.push_str(&format!(
+            "Hosted windows: {} in {} groups\n",
+            self.styling.len(),
+            self.groups.groups().len()
+        ));
+        out.push_str("\n--- settings.json ---\n");
+        out.push_str(
+            &serde_json::to_string_pretty(&self.settings).unwrap_or_else(|_| "(unreadable)".into()),
+        );
+        out.push_str("\n\n--- log tail ---\n");
+        out.push_str(&crate::logging::tail(120));
+        out.push('\n');
+        let chars = out.chars().count();
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(out));
+        let toast = dto::update_toast(
+            "Diagnostics copied",
+            ely_gpui_component::primitives::Severity::Success,
+            format!("{chars} characters on the clipboard"),
+        );
+        self.push_toast(toast, cx);
+    }
+
     /// Re-hosts the windows the janitor freed after a crash, in the order it reported them.
     pub(super) fn restore_recovered(&mut self) {
         let recovered = std::mem::take(&mut self.recovered);
