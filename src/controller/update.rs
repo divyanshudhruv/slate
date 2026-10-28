@@ -76,14 +76,7 @@ impl Controller {
         }
         let now = update::now_secs();
         if !force && now.saturating_sub(self.settings.updates.checked_at) < CHECK_COOLDOWN_SECS {
-            self.push_toast(
-                update_toast(
-                    "Checked a moment ago",
-                    Severity::Info,
-                    "Slate checked just now - try again shortly.",
-                ),
-                cx,
-            );
+            // A background check that is already fresh stays silent; only an explicit click reports it.
             return;
         }
         self.settings.updates.checked_at = now;
@@ -95,7 +88,7 @@ impl Controller {
         run_off_thread(
             cx,
             move || crate::win::update::fetch_latest(channel),
-            |controller, result, cx| controller.apply_update_result(result, cx),
+            move |controller, result, cx| controller.apply_update_result(result, force, cx),
         );
     }
 
@@ -159,7 +152,12 @@ impl Controller {
         );
     }
 
-    fn apply_update_result(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
+    fn apply_update_result(
+        &mut self,
+        result: Result<String, String>,
+        notify: bool,
+        cx: &mut Context<Self>,
+    ) {
         match result {
             Ok(version) if update::is_newer(update::CURRENT_VERSION, &version) => {
                 self.settings.updates.latest = Some(version.clone());
@@ -171,15 +169,22 @@ impl Controller {
                 self.settings.updates.latest = None;
                 self.save_settings();
                 self.update = UpdateState::UpToDate;
-                let body = format!("Slate v{} is the latest release.", update::CURRENT_VERSION);
-                self.push_toast(update_toast("Up to date", Severity::Success, body), cx);
+                if notify {
+                    let body = format!("Slate v{} is the latest release.", update::CURRENT_VERSION);
+                    self.push_toast(update_toast("Up to date", Severity::Success, body), cx);
+                }
             }
             Err(err) => {
                 self.update = UpdateState::Failed;
-                self.push_toast(
-                    update_toast("Update check failed", Severity::Danger, err),
-                    cx,
-                );
+                // A launch check must not interrupt with a toast; the title bar already shows the state.
+                if notify {
+                    self.push_toast(
+                        update_toast("Update check failed", Severity::Danger, err),
+                        cx,
+                    );
+                } else {
+                    tracing::warn!("background update check failed: {err}");
+                }
             }
         }
         self.invalidate_info();

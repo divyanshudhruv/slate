@@ -202,11 +202,7 @@ impl Controller {
                     version: crate::core::update::CURRENT_VERSION.to_string(),
                     pid: std::process::id(),
                 });
-                if canonical {
-                    let _ = std::fs::remove_file(crate::core::install::backup_path(
-                        &config::canonical_exe_path(),
-                    ));
-                }
+                // The pre-update backup is dropped on the first frame instead, so a build that never starts can roll back.
                 None
             }
             crate::core::install::Plan::FocusRunning { pid } => {
@@ -563,6 +559,9 @@ impl Controller {
 }
 /// Runs the install and update plan before any UI exists; Some means Slate must exit.
 pub fn startup() -> Option<i32> {
+    if let Some(code) = crate::win::update::recover_interrupted_update() {
+        return Some(code);
+    }
     if !crate::win::instance::claim() {
         return Some(0);
     }

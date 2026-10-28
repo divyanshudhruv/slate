@@ -6,6 +6,28 @@ pub const OLD_NAME: &str = "slate.exe.old";
 pub const STAGED_NAME: &str = "slate-staged.exe";
 pub const CANONICAL_NAME: &str = "slate.exe";
 pub const STAGING_PREFIX: &str = "slate-";
+/// Written before a swap, cleared once the new build reaches its first frame.
+pub const UPDATE_MARKER: &str = "update-pending.json";
+pub const FAILED_NAME: &str = "slate.failed.exe";
+
+/// Where the launch guard stands, judged from the marker left by the swap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchGuard {
+    /// No update in flight.
+    Clear,
+    /// First start after a swap; clearing the marker later proves it launched.
+    FirstStart,
+    /// The previous post-swap start never reached the UI, so the old exe comes back.
+    Rollback,
+}
+
+pub fn launch_guard(attempts: Option<u32>) -> LaunchGuard {
+    match attempts {
+        None => LaunchGuard::Clear,
+        Some(0) => LaunchGuard::FirstStart,
+        Some(_) => LaunchGuard::Rollback,
+    }
+}
 
 pub fn backup_path(canonical: &Path) -> PathBuf {
     canonical.with_file_name(OLD_NAME)
@@ -113,25 +135,27 @@ pub fn same_path(a: &str, b: &str) -> bool {
 }
 
 pub fn parse_release_filename(path: &Path) -> Option<(String, String)> {
-    let name = path.file_name()?.to_str()?;
-    let lower = name.to_ascii_lowercase();
-    let stem = lower.strip_suffix(".exe")?.to_string();
+    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    let stem = name.strip_suffix(".exe")?;
     let rest = stem.strip_prefix("slate-")?;
-    let rest = rest.strip_prefix(['v', 'V']).unwrap_or(rest);
-    let (version_part, arch) = rest.split_once('-')?;
+    let (version_part, arch) = rest.rsplit_once('-')?;
     if !ARCHES.contains(&arch) {
         return None;
     }
-    if version_part.contains('-') {
+    let version = version_part
+        .strip_prefix('v')
+        .unwrap_or(version_part)
+        .trim();
+    // Three core numbers, then an optional prerelease suffix such as `-beta.2`.
+    let core = version.split('-').next().unwrap_or(version);
+    if core.split('.').count() != 3 {
         return None;
     }
-    let version = version_part.trim();
-    if version.split('.').count() != 3 {
+    let parsed = parse_version(version)?;
+    if parsed.prerelease.iter().any(|part| part.is_empty()) {
         return None;
     }
-    parse_version(version)
-        .is_some()
-        .then_some((version.to_string(), arch.to_string()))
+    Some((version.to_string(), arch.to_string()))
 }
 
 pub fn checksum_for<'a>(sums: &'a str, file: &str) -> Option<&'a str> {
@@ -197,6 +221,14 @@ mod tests {
         assert!(needs_backup(true, false));
         assert!(!needs_backup(true, true));
         assert!(!needs_backup(false, true));
+    }
+
+    #[test]
+    fn launch_guard_allows_one_try_then_rolls_back() {
+        assert_eq!(launch_guard(None), LaunchGuard::Clear);
+        assert_eq!(launch_guard(Some(0)), LaunchGuard::FirstStart);
+        assert_eq!(launch_guard(Some(1)), LaunchGuard::Rollback);
+        assert_eq!(launch_guard(Some(9)), LaunchGuard::Rollback);
     }
 
     #[test]
@@ -311,6 +343,31 @@ mod tests {
             Plan::Update {
                 candidate: DOWNLOAD_2.into()
             }
+        );
+    }
+
+    #[test]
+    fn prerelease_asset_names_are_installable() {
+        let beta = "C:\\d\\slate-v0.6.0-beta.2-x64.exe";
+        assert_eq!(
+            parse_release_filename(Path::new(beta)),
+            Some(("0.6.0-beta.2".to_string(), "x64".to_string()))
+        );
+        assert_eq!(
+            classify(sit(beta, Some((CANON, "0.5.0", 7)), true, false)),
+            Plan::Update {
+                candidate: beta.into()
+            }
+        );
+        assert_eq!(
+            classify(sit(beta, Some((CANON, "0.6.0", 7)), true, false)),
+            Plan::Defer {
+                canonical: CANON.into()
+            }
+        );
+        assert_eq!(
+            parse_release_filename(Path::new("slate-v0.6.0-beta.2-arm64.exe")),
+            Some(("0.6.0-beta.2".to_string(), "arm64".to_string()))
         );
     }
 

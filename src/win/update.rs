@@ -23,6 +23,97 @@ fn http_client() -> Result<Client, String> {
         .map_err(|err| format!("http client: {err}"))
 }
 
+fn marker_path() -> PathBuf {
+    config::paths::data_dir().join(install::UPDATE_MARKER)
+}
+
+/// Records that a swapped-in build has not proven itself yet, so the next start can roll back.
+fn mark_pending(version: &str) {
+    let marker = serde_json::json!({ "version": version, "attempts": 0 });
+    let path = marker_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Err(err) = fs::write(&path, marker.to_string()) {
+        error!("could not write update marker: {err}");
+    }
+}
+
+pub fn clear_update_marker() {
+    let path = marker_path();
+    if path.exists() {
+        let _ = fs::remove_file(path);
+        // The new build reached its first frame, so the pre-update copy is no longer needed.
+        let canonical = config::canonical_exe_path();
+        let _ = fs::remove_file(install::backup_path(&canonical));
+    }
+}
+
+fn read_marker_attempts() -> Option<u32> {
+    let text = fs::read_to_string(marker_path()).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Some(value.get("attempts").and_then(|a| a.as_u64()).unwrap_or(0) as u32)
+}
+
+fn write_marker_attempts(attempts: u32) {
+    let path = marker_path();
+    let version = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("version")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| crate::core::update::CURRENT_VERSION.to_string());
+    let marker = serde_json::json!({ "version": version, "attempts": attempts });
+    let _ = fs::write(&path, marker.to_string());
+}
+
+/// Runs before any UI work: a build that never reached its first frame is replaced by the backup.
+pub fn recover_interrupted_update() -> Option<i32> {
+    match install::launch_guard(read_marker_attempts()) {
+        install::LaunchGuard::Clear => None,
+        install::LaunchGuard::FirstStart => {
+            write_marker_attempts(1);
+            None
+        }
+        install::LaunchGuard::Rollback => {
+            info!("the last update never started; rolling back");
+            let canonical = config::canonical_exe_path();
+            let backup = install::backup_path(&canonical);
+            if !backup.exists() {
+                error!("no backup to roll back to; keeping the current build");
+                clear_update_marker();
+                return None;
+            }
+            let failed = canonical.with_file_name(install::FAILED_NAME);
+            let _ = fs::remove_file(&failed);
+            if let Err(err) = fs::rename(&canonical, &failed) {
+                error!("could not set the failed build aside: {err}");
+                clear_update_marker();
+                return None;
+            }
+            if let Err(err) = fs::rename(&backup, &canonical) {
+                error!("could not put the backup back: {err}");
+                let _ = fs::rename(&failed, &canonical);
+                clear_update_marker();
+                return None;
+            }
+            clear_update_marker();
+            info!("rolled back to the previous build, relaunching");
+            if let Err(err) = Command::new(&canonical)
+                .creation_flags(CREATE_NO_WINDOW.0)
+                .spawn()
+            {
+                error!("could not relaunch the restored build: {err}");
+            }
+            Some(0)
+        }
+    }
+}
+
 pub fn bootstrap(source: &str) -> Result<(), String> {
     info!("bootstrap update from {source}");
     let source_path = Path::new(source);
@@ -116,6 +207,7 @@ pub fn refresh_install_from(candidate: &str) -> Result<(), String> {
     let canonical = config::canonical_exe_path();
     let downloaded = download_release(&version)?;
     let pid = std::process::id();
+    mark_pending(&version);
     spawn_swap_helper(pid, &canonical, &downloaded)?;
     if !config::save_install(&config::InstallRecord {
         path: canonical.to_string_lossy().into_owned(),
@@ -236,12 +328,25 @@ pub fn download_release(version: &str) -> Result<PathBuf, String> {
         return Err(format!("Network error {}", res.status().as_u16()));
     }
     let mut file = fs::File::create(&dest).map_err(|err| format!("create file: {err}"))?;
-    res.copy_to(&mut file)
-        .map_err(|err| format!("download: {err}"))?;
+    if let Err(err) = res.copy_to(&mut file) {
+        let _ = fs::remove_file(&dest);
+        return Err(format!("download: {err}"));
+    }
     let _ = file.flush();
-    let sums = fetch_sums(version)?;
-    let expected = install::checksum_for(&sums, &asset)
-        .ok_or_else(|| format!("missing checksum for {asset} in SHA256SUMS"))?;
+    let sums = match fetch_sums(version) {
+        Ok(sums) => sums,
+        Err(err) => {
+            let _ = fs::remove_file(&dest);
+            return Err(err);
+        }
+    };
+    let expected = match install::checksum_for(&sums, &asset) {
+        Some(expected) => expected,
+        None => {
+            let _ = fs::remove_file(&dest);
+            return Err(format!("missing checksum for {asset} in SHA256SUMS"));
+        }
+    };
     let actual = file_hash(&dest)?;
     if actual != expected {
         let _ = fs::remove_file(&dest);
@@ -271,7 +376,8 @@ fn fetch_sums(version: &str) -> Result<String, String> {
             res.status().as_u16()
         ));
     }
-    res.text().map_err(|err| format!("read sums: {err}"))
+    let sums = res.text().map_err(|err| format!("read sums: {err}"))?;
+    Ok(sums)
 }
 
 fn file_hash(path: &Path) -> Result<String, String> {

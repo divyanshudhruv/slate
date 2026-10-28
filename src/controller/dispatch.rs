@@ -15,6 +15,8 @@ impl Controller {
                 self.host_hwnd = Some(hwnd);
                 self.titlebar = titlebar;
                 install_window_icon(hwnd);
+                // The first frame is up, so a swapped-in build has proven it launches.
+                crate::win::update::clear_update_marker();
                 if let Some(tray) = &self.tray {
                     tray.set_host(hwnd);
                 }

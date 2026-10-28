@@ -35,13 +35,78 @@ pub fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-pub fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
+/// A parsed release version; a prerelease sorts below its own final release.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Version {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+    pub prerelease: Vec<String>,
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.major
+            .cmp(&other.major)
+            .then(self.minor.cmp(&other.minor))
+            .then(self.patch.cmp(&other.patch))
+            .then_with(|| compare_prerelease(&self.prerelease, &other.prerelease))
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Semver ordering: no prerelease beats any prerelease, then identifiers compare in turn.
+fn compare_prerelease(a: &[String], b: &[String]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    match (a.is_empty(), b.is_empty()) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        (false, false) => {}
+    }
+    for (left, right) in a.iter().zip(b) {
+        let ord = match (left.parse::<u64>(), right.parse::<u64>()) {
+            (Ok(left), Ok(right)) => left.cmp(&right),
+            (Ok(_), Err(_)) => Ordering::Less,
+            (Err(_), Ok(_)) => Ordering::Greater,
+            (Err(_), Err(_)) => left.cmp(right),
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+pub fn parse_version(text: &str) -> Option<Version> {
     let text = text.trim().trim_start_matches(['v', 'V']);
-    let mut parts = text.split('.');
+    let cut = text.find(['-', '+']).unwrap_or(text.len());
+    let (core, suffix) = text.split_at(cut);
+    let mut parts = core.split('.');
     let major = leading_number(parts.next()?)?;
     let minor = parts.next().and_then(leading_number).unwrap_or(0);
     let patch = parts.next().and_then(leading_number).unwrap_or(0);
-    Some((major, minor, patch))
+    let prerelease = suffix
+        .strip_prefix('-')
+        .unwrap_or("")
+        .split('+')
+        .next()
+        .unwrap_or("")
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect();
+    Some(Version {
+        major,
+        minor,
+        patch,
+        prerelease,
+    })
 }
 
 pub fn is_newer(current: &str, latest: &str) -> bool {
@@ -152,11 +217,7 @@ pub fn pick_release(releases: Vec<Release>, arch: &str) -> Option<Release> {
     releases
         .into_iter()
         .filter(|release| assets_ready(release, arch))
-        .max_by(|a, b| {
-            parse_version(&a.version)
-                .unwrap_or_default()
-                .cmp(&parse_version(&b.version).unwrap_or_default())
-        })
+        .max_by_key(|release| parse_version(&release.version))
 }
 
 pub fn assets_ready(release: &Release, arch: &str) -> bool {
@@ -180,13 +241,28 @@ mod tests {
 
     #[test]
     fn parses_plain_and_prefixed_versions() {
-        assert_eq!(parse_version("0.1.0"), Some((0, 1, 0)));
-        assert_eq!(parse_version("v1.2.3"), Some((1, 2, 3)));
-        assert_eq!(parse_version("1.2"), Some((1, 2, 0)));
-        assert_eq!(parse_version("1"), Some((1, 0, 0)));
-        assert_eq!(parse_version("0.1.0-beta"), Some((0, 1, 0)));
-        assert_eq!(parse_version("nonsense"), None);
-        assert_eq!(parse_version(""), None);
+        let plain = parse_version("0.1.0").unwrap();
+        assert_eq!((plain.major, plain.minor, plain.patch), (0, 1, 0));
+        assert!(plain.prerelease.is_empty());
+        let prefixed = parse_version("v1.2.3").unwrap();
+        assert_eq!((prefixed.major, prefixed.minor, prefixed.patch), (1, 2, 3));
+        assert_eq!(parse_version("1.2").map(|v| v.patch), Some(0));
+        assert_eq!(parse_version("1").map(|v| v.minor), Some(0));
+        assert!(parse_version("nonsense").is_none());
+        assert!(parse_version("").is_none());
+    }
+
+    #[test]
+    fn prerelease_is_kept_beside_the_core_numbers() {
+        let version = parse_version("0.1.0-beta.2").unwrap();
+        assert_eq!((version.major, version.minor, version.patch), (0, 1, 0));
+        assert_eq!(
+            version.prerelease,
+            vec!["beta".to_string(), "2".to_string()]
+        );
+        let build = parse_version("1.2.3+build.5").unwrap();
+        assert!(build.prerelease.is_empty());
+        assert_eq!(build.patch, 3);
     }
 
     #[test]
@@ -198,6 +274,23 @@ mod tests {
         assert!(!is_newer("0.2.0", "0.1.9"));
         assert!(!is_newer("0.1.0", "0.1.0"));
         assert!(!is_newer("0.1.0", "nonsense"));
+    }
+
+    #[test]
+    fn prereleases_sort_below_their_final_release() {
+        assert!(is_newer("0.6.0-beta", "0.6.0"));
+        assert!(is_newer("0.6.0-beta", "0.6.1"));
+        assert!(!is_newer("0.6.0", "0.6.0-beta"));
+        assert!(!is_newer("0.6.1", "0.6.0-beta"));
+    }
+
+    #[test]
+    fn prerelease_numbers_compare_numerically() {
+        assert!(is_newer("0.6.0-beta.1", "0.6.0-beta.2"));
+        assert!(is_newer("0.6.0-beta.9", "0.6.0-beta.10"));
+        assert!(!is_newer("0.6.0-beta.10", "0.6.0-beta.9"));
+        assert!(is_newer("0.6.0-alpha", "0.6.0-beta"));
+        assert!(is_newer("0.6.0-beta", "0.6.0-beta.1"));
     }
 
     #[test]
