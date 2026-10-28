@@ -8,6 +8,7 @@ pub mod host;
 pub mod icon;
 pub mod integrity;
 pub mod janitor;
+pub mod keys;
 pub mod pick;
 pub mod shell;
 pub mod shortcut;

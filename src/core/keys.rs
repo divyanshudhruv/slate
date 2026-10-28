@@ -82,6 +82,18 @@ impl KeyAction {
     }
 }
 
+type NameHook = fn(u16) -> Option<String>;
+type VkHook = fn(&str) -> Option<(u16, bool)>;
+
+static NAME_HOOK: std::sync::OnceLock<NameHook> = std::sync::OnceLock::new();
+static VK_HOOK: std::sync::OnceLock<VkHook> = std::sync::OnceLock::new();
+
+/// Lets the Win32 layer answer layout questions without core linking Win32.
+pub fn set_layout_hooks(name: NameHook, vk: VkHook) {
+    let _ = NAME_HOOK.set(name);
+    let _ = VK_HOOK.set(vk);
+}
+
 const VK_OEM_1: u16 = 0xBA;
 const VK_OEM_PLUS: u16 = 0xBB;
 const VK_OEM_COMMA: u16 = 0xBC;
@@ -182,15 +194,24 @@ pub fn name_for(vk: u16) -> Option<String> {
     if (VK_F1..=VK_F24).contains(&vk) {
         return Some(format!("f{}", vk - VK_F1 + 1));
     }
-    None
+    NAME_HOOK.get().and_then(|hook| hook(vk))
 }
 
 /// True when the chord carries at least one unshifted modifier, so a bare key never qualifies.
 pub fn chord_valid(chord: Chord) -> bool {
-    (chord.ctrl || chord.alt || chord.win) && name_for(chord.vk).is_some()
+    (chord.ctrl || chord.alt || chord.win) && chord.vk != 0 && chord.vk != VK_ESCAPE
 }
 
-/// Parses a settings string like "ctrl+shift+tab".
+/// Resolves a key name the current layout knows but the US table does not.
+fn vk_and_shift_for(name: &str) -> Option<(u16, bool)> {
+    if let Some(vk) = vk_for(name) {
+        return Some((vk, false));
+    }
+    VK_HOOK.get().and_then(|hook| hook(name))
+}
+
+/// Parses a settings string like "ctrl+shift+tab". Modifiers are read from the
+/// left, so the key part may itself contain '+'.
 pub fn parse(text: &str) -> Result<Chord, String> {
     let text = text.trim();
     if text.is_empty() {
@@ -203,51 +224,37 @@ pub fn parse(text: &str) -> Result<Chord, String> {
         win: false,
         vk: 0,
     };
-    for token in text.split('+') {
-        let token = token.trim().to_ascii_lowercase();
-        if token.is_empty() {
-            return Err(format!("bad keybind '{text}'"));
-        }
+    let mut rest = text;
+    while let Some((head, tail)) = rest.split_once('+') {
+        let token = head.trim().to_ascii_lowercase();
         match token.as_str() {
-            "ctrl" | "control" => {
-                if chord.ctrl {
-                    return Err(format!("bad keybind '{text}'"));
-                }
-                chord.ctrl = true;
-            }
-            "shift" => {
-                if chord.shift {
-                    return Err(format!("bad keybind '{text}'"));
-                }
-                chord.shift = true;
-            }
-            "alt" => {
-                if chord.alt {
-                    return Err(format!("bad keybind '{text}'"));
-                }
-                chord.alt = true;
-            }
-            "win" => {
-                if chord.win {
-                    return Err(format!("bad keybind '{text}'"));
-                }
-                chord.win = true;
-            }
-            _ => {
-                if chord.vk != 0 {
-                    return Err(format!("bad keybind '{text}'"));
-                }
-                chord.vk = vk_for(&token).ok_or_else(|| format!("unknown key '{token}'"))?;
-            }
+            "ctrl" | "control" => set_modifier(&mut chord.ctrl, text)?,
+            "shift" => set_modifier(&mut chord.shift, text)?,
+            "alt" => set_modifier(&mut chord.alt, text)?,
+            "win" => set_modifier(&mut chord.win, text)?,
+            _ => break,
         }
+        rest = tail;
     }
-    if chord.vk == 0 {
+    let key = rest.trim();
+    if key.is_empty() {
         return Err(format!("keybind '{text}' has no key"));
     }
+    let (vk, needs_shift) = vk_and_shift_for(key).ok_or_else(|| format!("unknown key '{key}'"))?;
+    chord.vk = vk;
+    chord.shift |= needs_shift;
     if !chord_valid(chord) {
         return Err(format!("keybind '{text}' needs ctrl, alt, or win"));
     }
     Ok(chord)
+}
+
+fn set_modifier(flag: &mut bool, text: &str) -> Result<(), String> {
+    if *flag {
+        return Err(format!("bad keybind '{text}'"));
+    }
+    *flag = true;
+    Ok(())
 }
 
 /// Writes a chord as a settings string like "ctrl+shift+tab", or none when Slate cannot spell it.
@@ -330,7 +337,15 @@ mod tests {
         assert!(parse("ctrl+++w").is_err());
         assert!(parse("ctrl+capslock").is_err());
         assert!(parse("ctrl+w+w").is_err());
-        assert!(parse("ctrl++").is_err());
+        assert!(parse("ctrl+ctrl+w").is_err());
+        assert!(parse("ctrl+++").is_err());
+    }
+
+    #[test]
+    fn plus_key_parses_from_the_right() {
+        let chord = parse("ctrl++").unwrap();
+        assert!(chord.ctrl);
+        assert_eq!(chord.vk, VK_OEM_PLUS);
     }
 
     #[test]

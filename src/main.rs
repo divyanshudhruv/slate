@@ -23,6 +23,7 @@ use gpui::{px, size, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOp
 fn main() {
     crate::config::paths::ensure_dirs();
     logging::init();
+    win::keys::install();
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--janitor") {
         let path = args.get(i + 1).cloned().unwrap_or_default();
