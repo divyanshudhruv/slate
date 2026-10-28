@@ -31,6 +31,9 @@ fn main() {
         win::janitor::run(std::path::PathBuf::from(path), pid);
         return;
     }
+    if let Some(code) = controller::startup() {
+        std::process::exit(code);
+    }
     gpui_platform::application()
         .with_assets(Assets)
         .run(|cx: &mut gpui::App| {

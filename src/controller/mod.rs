@@ -89,7 +89,6 @@ struct Index {
 impl Controller {
     pub fn new(cx: &mut Context<Self>) -> Self {
         config::ensure();
-        Self::execute_startup_plan(update::startup_install());
         let toaster = cx.new(|_| Toaster::default());
         let settings = config::load();
         let update = UpdateState::from_cached(
@@ -165,9 +164,10 @@ impl Controller {
             .then_some(record.pid)
     }
 
-    fn execute_startup_plan(plan: crate::core::install::Plan) {
+    /// Runs the install and update plan before the UI exists; Some means Slate must exit.
+    fn execute_startup_plan(plan: crate::core::install::Plan) -> Option<i32> {
         match plan {
-            crate::core::install::Plan::Dev => {}
+            crate::core::install::Plan::Dev => None,
             crate::core::install::Plan::Run { exe, canonical } => {
                 if !canonical && crate::config::paths::is_legacy_install(&exe) {
                     if let Some(pid) = Self::running_canonical() {
@@ -177,16 +177,16 @@ impl Controller {
                                 "Switching to the open window.",
                             );
                         }
-                        std::process::exit(0);
+                        return Some(0);
                     }
                     if let Err(err) = crate::win::update::relocate(&exe) {
                         crate::win::shell::info_message(
                             "Could not move Slate to its install folder",
                             &err,
                         );
-                        std::process::exit(1);
+                        return Some(1);
                     }
-                    std::process::exit(0);
+                    return Some(0);
                 }
                 config::save_install(&config::InstallRecord {
                     path: exe,
@@ -198,6 +198,7 @@ impl Controller {
                         &config::canonical_exe_path(),
                     ));
                 }
+                None
             }
             crate::core::install::Plan::FocusRunning { pid } => {
                 if activate_process(pid) {
@@ -206,30 +207,30 @@ impl Controller {
                         "Switching to the open window.",
                     );
                 }
-                std::process::exit(0);
+                Some(0)
             }
             crate::core::install::Plan::Bootstrap { source } => {
                 if let Err(err) = crate::win::update::bootstrap(&source) {
                     crate::win::shell::info_message("First-run bootstrap failed", &err);
-                    std::process::exit(1);
+                    return Some(1);
                 }
                 let _ = std::process::Command::new(config::canonical_exe_path())
                     .creation_flags(0)
                     .spawn();
-                std::process::exit(0);
+                Some(0)
             }
             crate::core::install::Plan::Update { candidate } => {
                 if let Err(err) = crate::win::update::refresh_install_from(&candidate) {
                     crate::win::shell::info_message("Update from downloaded release failed", &err);
-                    std::process::exit(1);
+                    return Some(1);
                 }
-                std::process::exit(0);
+                Some(0)
             }
             crate::core::install::Plan::Defer { canonical } => {
                 let _ = std::process::Command::new(&canonical)
                     .creation_flags(0)
                     .spawn();
-                std::process::exit(0);
+                Some(0)
             }
         }
     }
@@ -469,4 +470,8 @@ impl Controller {
             .as_ref()
             .and_then(|index| index.by_hwnd.get(&hwnd).copied())
     }
+}
+/// Runs the install and update plan before any UI exists; Some means Slate must exit.
+pub fn startup() -> Option<i32> {
+    Controller::execute_startup_plan(update::startup_install())
 }
