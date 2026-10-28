@@ -207,7 +207,13 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
             MenuItem::new(info.update_label.clone())
                 .icon(update_icon)
                 .disabled(update_disabled)
-                .on_click(overlay_action(controller, || Cmd::CheckForUpdates)),
+                .on_click(overlay_action(controller, || Cmd::CheckForUpdates {
+                    force: true,
+                })),
+        )
+        .item(
+            MenuItem::check("Beta update channel", info.beta_channel)
+                .on_click(overlay_action(controller, || Cmd::ToggleUpdateChannel)),
         )
         .item(
             MenuItem::new("Open GitHub repository")

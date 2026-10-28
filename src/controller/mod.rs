@@ -391,6 +391,7 @@ impl Controller {
             caption,
             version_label,
             update_label,
+            beta_channel: self.settings.updates.channel == crate::core::update::Channel::Beta,
         }
     }
 
@@ -515,6 +516,10 @@ impl Controller {
             "Hosted windows: {} in {} groups\n",
             self.styling.len(),
             self.groups.groups().len()
+        ));
+        out.push_str(&format!(
+            "Update channel: {}\n",
+            self.settings.updates.channel.as_str()
         ));
         out.push_str("\n--- settings.json ---\n");
         out.push_str(

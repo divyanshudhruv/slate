@@ -21,6 +21,7 @@ impl Controller {
                 self.worker.start();
                 self.worker.install_move_tracker(hwnd);
                 self.restore_session();
+                self.check_for_updates(false, cx);
             }
             Cmd::SelectTab { group, tab } => self.select_tab(group, tab),
             Cmd::Ungroup { group, tab } => {
@@ -129,7 +130,8 @@ impl Controller {
             Cmd::OpenRepository => {
                 crate::win::shell::open_url(crate::core::update::REPOSITORY_URL);
             }
-            Cmd::CheckForUpdates => self.check_for_updates(cx),
+            Cmd::CheckForUpdates { force } => self.check_for_updates(force, cx),
+            Cmd::ToggleUpdateChannel => self.toggle_update_channel(cx),
             Cmd::InstallAvailableUpdate => {
                 if let crate::core::UpdateState::Available(version) = self.update.clone() {
                     self.install_update_from_dialog(version, cx);

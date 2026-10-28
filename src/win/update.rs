@@ -11,7 +11,9 @@ use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::config;
 use crate::core::install;
-use crate::core::update::{self, assets_ready, parse_release, LATEST_API_URL};
+use crate::core::update::{
+    self, assets_ready, parse_release, parse_releases, pick_release, Channel,
+};
 
 fn http_client() -> Result<Client, String> {
     Client::builder()
@@ -126,10 +128,10 @@ pub fn refresh_install_from(candidate: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn fetch_latest() -> Result<String, String> {
+pub fn fetch_latest(channel: Channel) -> Result<String, String> {
     let client = http_client()?;
     let res = client
-        .get(LATEST_API_URL)
+        .get(channel.api_url())
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "slate-update-check")
         .send()
@@ -158,7 +160,16 @@ pub fn fetch_latest() -> Result<String, String> {
         return Err(format!("GitHub returned HTTP {}", status.as_u16()));
     }
     let body = res.text().map_err(|err| format!("read body: {err}"))?;
-    let release = parse_release(&body).ok_or_else(|| "no release tag in response".to_string())?;
+    let release = match channel {
+        Channel::Stable => {
+            parse_release(&body).ok_or_else(|| "no release tag in response".to_string())?
+        }
+        Channel::Beta => {
+            return pick_release(parse_releases(&body), asset_arch())
+                .map(|release| release.version)
+                .ok_or_else(|| "No beta release with downloads yet".to_string())
+        }
+    };
     // release-please publishes the release before the build workflow uploads assets, so a bare tag must not count as an installable update.
     if !assets_ready(&release, asset_arch()) {
         return Err(format!(

@@ -176,6 +176,8 @@ pub struct Updates {
     pub latest: Option<String>,
     #[serde(default)]
     pub checked_at: i64,
+    #[serde(default)]
+    pub channel: crate::core::update::Channel,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

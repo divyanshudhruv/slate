@@ -128,7 +128,10 @@ pub enum Cmd {
     Shutdown,
     ToggleTabBar,
     OpenRepository,
-    CheckForUpdates,
+    CheckForUpdates {
+        force: bool,
+    },
+    ToggleUpdateChannel,
     OpenSlateFolder,
     ReloadSettings,
     OpenKeybinds,
@@ -186,6 +189,7 @@ pub struct HostInfo {
     pub caption: SharedString,
     pub version_label: SharedString,
     pub update_label: SharedString,
+    pub beta_channel: bool,
 }
 
 #[derive(Clone)]

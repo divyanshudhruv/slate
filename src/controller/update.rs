@@ -67,7 +67,7 @@ pub(super) fn startup_install() -> crate::core::install::Plan {
 }
 
 impl Controller {
-    pub(super) fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn check_for_updates(&mut self, force: bool, cx: &mut Context<Self>) {
         if matches!(self.update, UpdateState::Available(_)) {
             self.dialog = Some(Dialog::Update);
             self.invalidate_info();
@@ -75,7 +75,7 @@ impl Controller {
             return;
         }
         let now = update::now_secs();
-        if now.saturating_sub(self.settings.updates.checked_at) < CHECK_COOLDOWN_SECS {
+        if !force && now.saturating_sub(self.settings.updates.checked_at) < CHECK_COOLDOWN_SECS {
             self.push_toast(
                 update_toast(
                     "Checked a moment ago",
@@ -91,11 +91,23 @@ impl Controller {
         self.update = UpdateState::Checking;
         self.invalidate_info();
         cx.notify();
+        let channel = self.settings.updates.channel;
         run_off_thread(
             cx,
-            crate::win::update::fetch_latest,
+            move || crate::win::update::fetch_latest(channel),
             |controller, result, cx| controller.apply_update_result(result, cx),
         );
+    }
+
+    pub(super) fn toggle_update_channel(&mut self, cx: &mut Context<Self>) {
+        self.settings.updates.channel = match self.settings.updates.channel {
+            update::Channel::Stable => update::Channel::Beta,
+            update::Channel::Beta => update::Channel::Stable,
+        };
+        self.settings.updates.checked_at = 0;
+        self.save_settings();
+        self.invalidate_info();
+        cx.notify();
     }
 
     pub(super) fn install_update_from_dialog(&mut self, version: String, cx: &mut Context<Self>) {

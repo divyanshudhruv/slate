@@ -70,8 +70,48 @@ pub struct Release {
     pub assets: Vec<String>,
 }
 
-pub fn parse_release(body: &str) -> Option<Release> {
-    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+/// Which release line update checks follow; beta sees prereleases first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+impl Channel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Beta => "beta",
+        }
+    }
+
+    pub fn api_url(self) -> String {
+        match self {
+            Self::Stable => LATEST_API_URL.to_string(),
+            Self::Beta => {
+                format!("https://api.github.com/repos/{REPO_SLUG}/releases?per_page=20")
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Channel {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = <String as serde::Deserialize>::deserialize(deserializer)?;
+        Ok(match text.to_ascii_lowercase().as_str() {
+            "beta" => Self::Beta,
+            "stable" => Self::Stable,
+            other => {
+                tracing::warn!("unknown update channel '{other}', using stable");
+                Self::Stable
+            }
+        })
+    }
+}
+
+fn release_from_value(value: &serde_json::Value) -> Option<Release> {
     let tag = value.get("tag_name")?.as_str()?.trim();
     let version = tag.trim_start_matches(['v', 'V']);
     if version.is_empty() {
@@ -92,6 +132,31 @@ pub fn parse_release(body: &str) -> Option<Release> {
         version: version.to_string(),
         assets,
     })
+}
+
+pub fn parse_release(body: &str) -> Option<Release> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    release_from_value(&value)
+}
+
+/// GitHub's release list, newest first, for the beta channel.
+pub fn parse_releases(body: &str) -> Vec<Release> {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str(body) else {
+        return Vec::new();
+    };
+    items.iter().filter_map(release_from_value).collect()
+}
+
+/// The newest listed release whose downloads are fully uploaded.
+pub fn pick_release(releases: Vec<Release>, arch: &str) -> Option<Release> {
+    releases
+        .into_iter()
+        .filter(|release| assets_ready(release, arch))
+        .max_by(|a, b| {
+            parse_version(&a.version)
+                .unwrap_or_default()
+                .cmp(&parse_version(&b.version).unwrap_or_default())
+        })
 }
 
 pub fn assets_ready(release: &Release, arch: &str) -> bool {
@@ -174,6 +239,35 @@ mod tests {
     fn asset_name_is_the_checksum_key() {
         assert_eq!(asset_name("0.2.0", "x64"), "slate-v0.2.0-x64.exe");
         assert_eq!(asset_name("v0.2.0", "arm64"), "slate-v0.2.0-arm64.exe");
+    }
+
+    #[test]
+    fn beta_channel_picks_newest_ready_release() {
+        let body = r#"[
+            {"tag_name":"v0.6.0-beta","assets":[{"name":"slate-v0.6.0-beta-x64.exe"}]},
+            {"tag_name":"v0.5.0","assets":[{"name":"slate-v0.5.0-x64.exe"},{"name":"SHA256SUMS"}]},
+            {"tag_name":"v0.4.0","assets":[{"name":"slate-v0.4.0-x64.exe"},{"name":"SHA256SUMS"}]}
+        ]"#;
+        let picked = pick_release(parse_releases(body), "x64").expect("a ready release");
+        assert_eq!(picked.version, "0.5.0");
+        assert_eq!(Channel::Stable.api_url(), LATEST_API_URL);
+        assert_eq!(
+            Channel::Beta.api_url(),
+            format!("https://api.github.com/repos/{REPO_SLUG}/releases?per_page=20")
+        );
+    }
+
+    #[test]
+    fn beta_channel_accepts_a_ready_prerelease() {
+        let body = r#"[{"tag_name":"v0.6.0-beta","assets":[{"name":"slate-v0.6.0-beta-x64.exe"},{"name":"SHA256SUMS"}]}]"#;
+        let picked = pick_release(parse_releases(body), "x64").expect("ready prerelease");
+        assert_eq!(picked.version, "0.6.0-beta");
+    }
+
+    #[test]
+    fn unknown_channel_falls_back_to_stable() {
+        let channel: Channel = serde_json::from_str(r#""nightly""#).unwrap();
+        assert_eq!(channel, Channel::Stable);
     }
 
     #[test]
