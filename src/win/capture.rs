@@ -6,7 +6,9 @@ use windows::Win32::Graphics::Gdi::{
     GetDIBits, ReleaseDC, SelectObject, SetStretchBltMode, StretchBlt, BITMAPINFO,
     BITMAPINFOHEADER, DIB_RGB_COLORS, HALFTONE, HBITMAP, HDC, HGDIOBJ, SRCCOPY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetForegroundWindow, IsIconic};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetClientRect, GetForegroundWindow, IsHungAppWindow, IsIconic,
+};
 
 /// Twice the hover card width, so previews stay crisp at 2x DPI without huge frames.
 const MAX_W: i32 = 448;
@@ -37,14 +39,6 @@ pub fn capture_window(hwnd: isize) -> Option<WindowSnapshot> {
         POOL.with(|pool| *pool.borrow_mut() = None);
     }
     None
-}
-
-/// Swaps the BGR channel order Windows hands back for RGBA.
-pub fn bgra_to_rgba(mut bytes: Vec<u8>) -> Vec<u8> {
-    for px in bytes.as_chunks_mut::<4>().0 {
-        px.swap(0, 2);
-    }
-    bytes
 }
 
 struct ScreenDc(HDC);
@@ -131,8 +125,12 @@ unsafe fn grab_once(hwnd: isize) -> Option<WindowSnapshot> {
     };
 
     let old = SelectObject(pooled.mem.0, HGDIOBJ(pooled.bmp.0 .0));
-    // The window draws itself first, so an occluded window never leaks pixels.
-    let mut bgra = print_window(h, pooled.mem.0, pooled.bmp.0, w, hgt, tw, th);
+    // PrintWindow sends messages to the target thread, so a hung app would freeze the UI thread.
+    let mut bgra = if IsHungAppWindow(h).as_bool() {
+        None
+    } else {
+        print_window(h, pooled.mem.0, pooled.bmp.0, w, hgt, tw, th)
+    };
     // Screen pixels are only trusted for the window the user is looking at.
     if bgra.is_none() && GetForegroundWindow() == h {
         let mut origin = POINT::default();
@@ -249,17 +247,4 @@ unsafe fn read_pixels(mem: HDC, bmp: HBITMAP, width: i32, height: i32) -> Option
         px[3] = 0xFF;
     }
     Some(buf)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::bgra_to_rgba;
-
-    #[test]
-    fn bgra_becomes_rgba() {
-        assert_eq!(
-            bgra_to_rgba(vec![1, 2, 3, 4, 5, 6, 7, 8]),
-            vec![3, 2, 1, 4, 7, 6, 5, 8]
-        );
-    }
 }

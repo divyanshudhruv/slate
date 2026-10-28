@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "theme": "system",
-  "accent": "blue",
+  "accent": "none",
   "restore_session": true,
   "preview_delay_ms": 500,
   "tabs": {

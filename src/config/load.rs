@@ -438,7 +438,7 @@ mod tests {
             "tabs": { "icons": false }
         }));
         assert_eq!(s.theme, crate::config::ThemeMode::Dark);
-        assert_eq!(s.accent.name(), "blue");
+        assert_eq!(s.accent.name(), "none");
         assert!(!s.tabs.icons);
         assert!(s.tabs.count_badge);
     }
@@ -569,7 +569,7 @@ mod tests {
         let value = crate::config::save::app_value(&settings);
         assert_eq!(value["restore_session"], false);
         assert_eq!(value["theme"], "system");
-        assert_eq!(value["accent"], "blue");
+        assert_eq!(value["accent"], "none");
     }
 
     fn scratch(name: &str) -> PathBuf {

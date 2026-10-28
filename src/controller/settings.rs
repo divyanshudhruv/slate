@@ -86,20 +86,20 @@ impl Controller {
     /// Keeps both modes' palettes wearing the chosen accent, so a mode switch never falls back to Ely's own.
     fn apply_accent(&self, cx: &mut Context<Self>) {
         let contrast = cx.theme().high_contrast();
-        let index = accent_hue(self.settings.accent.name());
+        let hue = accent_hue(self.settings.accent.name());
         for mode in [Mode::Light, Mode::Dark] {
-            let palette = index.map(|index| {
-                let mut palette = match mode {
-                    Mode::Light => Palette::light(contrast),
-                    Mode::Dark => Palette::dark(contrast),
-                };
-                let color = palette.hue(index, "accent");
-                palette.accent = color;
-                palette.accent_hover = hover_of(color);
-                palette.on_accent = readable_on(color);
-                palette
-            });
-            Theme::set_palette(mode, palette, cx);
+            let mut palette = match mode {
+                Mode::Light => Palette::light(contrast),
+                Mode::Dark => Palette::dark(contrast),
+            };
+            let color = match hue {
+                Some(index) => palette.hue(index, "accent"),
+                None => neutral_accent(mode),
+            };
+            palette.accent = color;
+            palette.accent_hover = hover_of(color);
+            palette.on_accent = readable_on(color);
+            Theme::set_palette(mode, Some(palette), cx);
         }
     }
 
@@ -123,6 +123,20 @@ pub(super) fn accent_hue(name: &str) -> Option<usize> {
     HUE_NAMES
         .iter()
         .position(|hue| hue.eq_ignore_ascii_case(name))
+}
+
+/// The untinted accent, so `"none"` reads as white-on-dark and black-on-light rather than Ely's blue.
+fn neutral_accent(mode: Mode) -> Hsla {
+    let l = match mode {
+        Mode::Dark => 0.93,
+        Mode::Light => 0.16,
+    };
+    Hsla {
+        h: 0.0,
+        s: 0.0,
+        l,
+        a: 1.0,
+    }
 }
 
 /// The accent's hover shade: darker on a light fill, lighter on a dark one.

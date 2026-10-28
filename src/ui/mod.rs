@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use gpui::{RenderImage, Window};
 
-pub fn render_image(rgba: image::RgbaImage) -> Arc<RenderImage> {
-    Arc::new(RenderImage::new(vec![image::Frame::new(rgba)]))
+/// Wraps raw windows pixels as a gpui image; gpui reads the buffer as BGRA, which is what Win32 gives us.
+pub fn render_image(bgra: image::RgbaImage) -> Arc<RenderImage> {
+    Arc::new(RenderImage::new(vec![image::Frame::new(bgra)]))
 }
 
 pub(crate) fn window_hwnd(window: &Window) -> Option<isize> {

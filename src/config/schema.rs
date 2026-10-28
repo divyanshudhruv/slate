@@ -85,14 +85,14 @@ impl<'de> Deserialize<'de> for ThemeMode {
     }
 }
 
-/// A named accent from the theme's hue palette; unknown names warn and fall back to blue.
+/// A named accent from the theme's hue palette; unknown names warn and fall back to none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct Accent(String);
 
 impl Default for Accent {
     fn default() -> Self {
-        Self("blue".to_string())
+        Self("none".to_string())
     }
 }
 
@@ -115,7 +115,7 @@ impl<'de> Deserialize<'de> for Accent {
         if Self::accepts(&text) {
             return Ok(Self(text));
         }
-        tracing::warn!("unknown accent '{text}', using blue");
+        tracing::warn!("unknown accent '{text}', using none");
         Ok(Self::default())
     }
 }
@@ -273,12 +273,24 @@ impl Keybinds {
         let mut used: Vec<crate::core::keys::Chord> = Vec::new();
         let mut out = Vec::with_capacity(ACTIONS.len());
         for action in ACTIONS {
-            let mut chord = crate::core::keys::parse(self.chord_text(action))
-                .unwrap_or_else(|_| action.default());
+            let text = self.chord_text(action);
+            let mut chord = match crate::core::keys::parse(text) {
+                Ok(chord) => chord,
+                Err(err) => {
+                    tracing::warn!(
+                        "keybind {action:?} = {text:?} is invalid ({err}); using the default"
+                    );
+                    action.default()
+                }
+            };
             if used.contains(&chord) {
+                tracing::warn!(
+                    "keybind {action:?} = {text:?} is already taken; using the default instead"
+                );
                 chord = action.default();
             }
             if used.contains(&chord) {
+                tracing::warn!("keybind {action:?} has no free chord; the action stays unbound");
                 continue;
             }
             used.push(chord);
@@ -351,7 +363,14 @@ mod tests {
         let back: Settings =
             serde_json::from_str(r#"{ "theme": "drak", "accent": "tangerine" }"#).unwrap();
         assert_eq!(back.theme, ThemeMode::System);
-        assert_eq!(back.accent.name(), "blue");
+        assert_eq!(back.accent.name(), "none");
+    }
+
+    #[test]
+    fn default_accent_is_none() {
+        assert_eq!(Settings::default().accent.name(), "none");
+        let back: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(back.accent.name(), "none");
     }
 
     #[test]

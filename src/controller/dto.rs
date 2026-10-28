@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crate::core::keys::KeyAction;
 use crate::core::{GroupId, TabId, UpdateState};
-use crate::win::{bgra_to_rgba, IconPixels, WindowSnapshot};
+use crate::win::{IconPixels, WindowSnapshot};
 
 #[derive(Debug, Clone)]
 pub enum Cmd {
@@ -273,12 +273,13 @@ pub(super) fn app_name(exe_name: &str) -> String {
     }
 }
 
+/// Windows hands back BGRA, which is exactly what `RenderImage` wants, so no swap here.
 pub(super) fn render_image(px: IconPixels) -> Option<Arc<RenderImage>> {
-    let buffer = image::RgbaImage::from_raw(px.width, px.height, bgra_to_rgba(px.bgra))?;
+    let buffer = image::RgbaImage::from_raw(px.width, px.height, px.bgra)?;
     Some(crate::ui::render_image(buffer))
 }
 
 pub(super) fn render_snapshot(snap: WindowSnapshot) -> Option<Arc<RenderImage>> {
-    let buffer = image::RgbaImage::from_raw(snap.width, snap.height, bgra_to_rgba(snap.bgra))?;
+    let buffer = image::RgbaImage::from_raw(snap.width, snap.height, snap.bgra)?;
     Some(crate::ui::render_image(buffer))
 }

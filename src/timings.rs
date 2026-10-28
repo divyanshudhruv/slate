@@ -2,8 +2,9 @@ use std::time::Duration;
 
 /// How often the controller processes queued work while active.
 pub const UI_TICK: Duration = Duration::from_millis(50);
-/// Backoff for the controller when nothing is interacting with the host.
-pub const UI_IDLE_TICK: Duration = Duration::from_millis(250);
+/// Backoff for the controller when nothing is interacting with the host. Shortcuts arrive on a
+/// global hook, so this also bounds how long a chord can sit queued before it is handled.
+pub const UI_IDLE_TICK: Duration = Duration::from_millis(80);
 /// How often the pick overlay checks for Tab/Escape.
 pub const PICK_POLL: Duration = Duration::from_millis(40);
 /// How often the host worker re-checks member windows while settling.

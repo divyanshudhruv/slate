@@ -18,7 +18,7 @@ pub mod tray;
 pub mod update;
 
 pub use activate::{activate_process, activate_window, close_window, move_window, window_rect};
-pub use capture::{bgra_to_rgba, capture_window, WindowSnapshot};
+pub use capture::{capture_window, WindowSnapshot};
 pub use compat::is_blacklisted;
 pub use enumerate::{enumerate_windows, window_title};
 pub use events::{WinEvent, WinEventPump};
