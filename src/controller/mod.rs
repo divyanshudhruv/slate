@@ -19,7 +19,6 @@ use gpui::{AppContext, Context, Entity, RenderImage, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use self::dto::app_name;
 use crate::config;
@@ -29,9 +28,6 @@ use crate::win::{
     Janitor, KeyboardCapture, ShortcutCapture, StylingState, WinEventPump,
 };
 use std::os::windows::process::CommandExt;
-
-pub(super) const PREVIEW_OPEN_MS: u64 = 500;
-pub(super) const PREVIEW_LINGER_MS: u64 = 200;
 
 pub struct Controller {
     windows: Vec<WindowIdentity>,
@@ -239,7 +235,7 @@ impl Controller {
     fn start_event_pump(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
-                .timer(Duration::from_millis(50))
+                .timer(crate::timings::UI_TICK)
                 .await;
             if this
                 .update(cx, |controller, cx| controller.tick(cx))

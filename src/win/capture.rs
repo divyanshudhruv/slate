@@ -8,7 +8,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetForegroundWindow, IsIconic};
 
-const MAX_W: i32 = 640;
+/// Twice the hover card width, so previews stay crisp at 2x DPI without huge frames.
+const MAX_W: i32 = 448;
 
 const PW_CLIENTONLY: u32 = 1;
 const PW_RENDERFULLCONTENT: u32 = 2;

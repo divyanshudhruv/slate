@@ -2,6 +2,7 @@ const LOGO_SOURCES: &[&str] = &["slate"];
 const DEFAULT_LOGO: &str = "slate";
 const LOGO_DIRS: &[&str] = &["", "assets", "assets/icons"];
 const LOGO_EXTS: &[&str] = &["png", "ico"];
+const ICON_RESOURCE_ID: u32 = 1;
 
 fn resolve(name: &str) -> Option<std::path::PathBuf> {
     for ext in LOGO_EXTS {
@@ -53,8 +54,8 @@ fn main() {
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
     let (v1, v2, v3, v4) = version_quad(&version);
     let rc = format!(
-        r#"1 ICON "{ico_lit}"
-1 VERSIONINFO
+        r#"{ICON_RESOURCE_ID} ICON "{ico_lit}"
+{ICON_RESOURCE_ID} VERSIONINFO
 FILEVERSION {v1},{v2},{v3},{v4}
 PRODUCTVERSION {v1},{v2},{v3},{v4}
 FILEOS 0x40004
@@ -85,6 +86,7 @@ END
 
     let abs = std::fs::canonicalize(&selected).unwrap_or(selected);
     println!("cargo:rustc-env=SLATE_LOGO={}", abs.display());
+    println!("cargo:rustc-env=SLATE_ICON_RESOURCE_ID={ICON_RESOURCE_ID}");
 }
 
 fn version_quad(version: &str) -> (u16, u16, u16, u16) {

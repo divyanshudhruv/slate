@@ -34,11 +34,12 @@ pub fn install_window_icon(hwnd: isize) {
 
 #[allow(clippy::manual_dangling_ptr)]
 fn embedded_icon(size: u32) -> Option<isize> {
+    let resource_id: usize = env!("SLATE_ICON_RESOURCE_ID").parse().ok()?;
     unsafe {
         let hinst = GetModuleHandleW(None).ok()?;
         let handle = LoadImageW(
             Some(HINSTANCE(hinst.0)),
-            PCWSTR::from_raw(1usize as *const u16),
+            PCWSTR::from_raw(resource_id as *const u16),
             IMAGE_ICON,
             size as i32,
             size as i32,

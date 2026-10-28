@@ -1,5 +1,4 @@
 use gpui::Context;
-use std::time::Duration;
 
 use super::dto::pick_toast;
 use super::Controller;
@@ -24,7 +23,7 @@ impl Controller {
         let generation = self.pick_gen;
         cx.spawn(async move |this, cx| loop {
             cx.background_executor()
-                .timer(Duration::from_millis(40))
+                .timer(crate::timings::PICK_POLL)
                 .await;
             let done = this
                 .update(cx, |controller, cx| controller.poll_pick(generation, cx))

@@ -3,6 +3,7 @@
   "theme": "system",
   "accent": "blue",
   "restore_session": true,
+  "preview_delay_ms": 500,
   "tabs": {
     "icons": true,
     "count_badge": true,

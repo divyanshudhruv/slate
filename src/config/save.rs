@@ -14,6 +14,7 @@ pub(crate) fn app_value(settings: &Settings) -> Value {
         theme: &settings.theme,
         accent: &settings.accent,
         restore_session: settings.restore_session,
+        preview_delay_ms: settings.preview_delay_ms,
         tabs: &settings.tabs,
         updates: &settings.updates,
         keybinds: &settings.keybinds,

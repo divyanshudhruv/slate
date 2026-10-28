@@ -14,6 +14,8 @@ pub struct Settings {
     pub accent: String,
     #[serde(default = "yes")]
     pub restore_session: bool,
+    #[serde(default = "preview_delay_default")]
+    pub preview_delay_ms: u64,
     #[serde(default)]
     pub tabs: Tabs,
     #[serde(default)]
@@ -52,6 +54,7 @@ impl Default for Settings {
             theme: theme_default(),
             accent: accent_default(),
             restore_session: true,
+            preview_delay_ms: preview_delay_default(),
             tabs: Tabs::default(),
             updates: Updates::default(),
             keybinds: Keybinds::default(),
@@ -191,6 +194,7 @@ pub struct AppSettings<'a> {
     pub theme: &'a str,
     pub accent: &'a str,
     pub restore_session: bool,
+    pub preview_delay_ms: u64,
     pub tabs: &'a Tabs,
     pub updates: &'a Updates,
     pub keybinds: &'a Keybinds,
@@ -227,6 +231,9 @@ fn theme_default() -> String {
 }
 fn accent_default() -> String {
     "blue".to_string()
+}
+fn preview_delay_default() -> u64 {
+    crate::timings::DEFAULT_PREVIEW_DELAY_MS
 }
 fn yes() -> bool {
     true

@@ -5,6 +5,7 @@ mod config;
 mod core;
 #[cfg(windows)]
 mod logging;
+mod timings;
 #[cfg(windows)]
 mod win;
 

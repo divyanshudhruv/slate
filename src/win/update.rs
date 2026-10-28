@@ -299,6 +299,7 @@ fn helper_script(pid: u32, target: &Path, staged: &Path) -> String {
     let staged = batch_arg(staged);
     let target = batch_arg(target);
     let backup = batch_arg(&backup);
+    let tries = crate::timings::SWAP_WAIT_SECS;
     format!(
         "@echo off\r\n\
          setlocal DisableDelayedExpansion\r\n\
@@ -307,8 +308,8 @@ fn helper_script(pid: u32, target: &Path, staged: &Path) -> String {
          tasklist /fi \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\r\n\
          if errorlevel 1 goto swap\r\n\
          set /a n+=1\r\n\
-         if %n% geq 600 goto swap\r\n\
-         ping -n 2 127.0.0.1 >nul\r\n\
+         if %n% geq {tries} goto swap\r\n\
+         timeout /t 1 /nobreak >nul 2>&1 || ping -n 2 127.0.0.1 >nul\r\n\
          goto wait\r\n\
          :swap\r\n\
          if not exist {staged} goto launch\r\n\
@@ -327,53 +328,13 @@ fn helper_script(pid: u32, target: &Path, staged: &Path) -> String {
         staged = staged,
         target = target,
         backup = backup,
+        tries = tries,
     )
-}
-
-#[cfg(test)]
-fn split_status(text: &str) -> (&str, &str) {
-    match text.rsplit_once('\n') {
-        Some((body, status)) => (body, status.trim()),
-        None => (text, ""),
-    }
-}
-
-#[cfg(test)]
-fn status_error(status: &str) -> Option<String> {
-    match status {
-        "200" => None,
-        "403" | "429" => {
-            Some("GitHub is rate-limiting update checks (60/hour) - try later".to_string())
-        }
-        "404" => Some("No releases published yet".to_string()),
-        "" | "000" => Some("No response from GitHub".to_string()),
-        other => Some(format!("GitHub returned HTTP {other}")),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn status_is_the_last_line() {
-        let (body, status) = split_status("{\"tag_name\":\"v1.2.3\"}\n200");
-        assert_eq!(body, "{\"tag_name\":\"v1.2.3\"}");
-        assert_eq!(status, "200");
-
-        let (body, status) = split_status("\n403");
-        assert_eq!(body, "");
-        assert_eq!(status, "403");
-    }
-
-    #[test]
-    fn http_errors_name_the_reason() {
-        assert!(status_error("200").is_none());
-        assert!(status_error("403").unwrap().contains("60/hour"));
-        assert!(status_error("429").unwrap().contains("rate-limit"));
-        assert_eq!(status_error("500").unwrap(), "GitHub returned HTTP 500");
-        assert!(status_error("").unwrap().contains("No response"));
-    }
 
     const TARGET: &str = "C:\\Users\\a\\.burntfern\\slate\\slate.exe";
     const STAGED: &str = "C:\\Users\\a\\.burntfern\\slate\\updates\\slate-update-v0.2.0-x64.exe";
@@ -389,8 +350,11 @@ mod tests {
         assert!(script.contains("if errorlevel 1 goto swap"));
         assert!(script.contains("start \"\" \"C:\\apps\\slate.exe\""));
         assert!(script.contains("del \"%~f0\""));
-        assert!(!script.contains("timeout"));
-        assert!(script.contains("ping -n 2 127.0.0.1"));
+        assert!(script.contains(&format!(
+            "if %n% geq {} goto swap",
+            crate::timings::SWAP_WAIT_SECS
+        )));
+        assert!(script.contains("timeout /t 1 /nobreak"));
     }
 
     #[test]

@@ -2,8 +2,9 @@ use gpui::Context;
 use std::time::Duration;
 
 use super::dto::{render_snapshot, HoverPreview};
-use super::{Controller, PREVIEW_LINGER_MS, PREVIEW_OPEN_MS};
+use super::Controller;
 use crate::core::TabId;
+use crate::timings::{MAX_PREVIEW_DELAY_MS, PREVIEW_LINGER_MS};
 use crate::win::capture_window;
 
 impl Controller {
@@ -39,7 +40,11 @@ impl Controller {
             self.show_hover_preview(tab, anchor, cx);
             return;
         }
-        self.after_hover_delay(PREVIEW_OPEN_MS, cx, move |c, cx| {
+        let delay = self
+            .settings
+            .preview_delay_ms
+            .clamp(50, MAX_PREVIEW_DELAY_MS);
+        self.after_hover_delay(delay, cx, move |c, cx| {
             c.show_hover_preview(tab, anchor, cx);
             c.sync_worker();
             cx.notify();

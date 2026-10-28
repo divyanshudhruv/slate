@@ -5,7 +5,8 @@ pub const RELEASES_URL: &str = "https://github.com/divyanshudhruv/slate/releases
 pub const LATEST_API_URL: &str =
     "https://api.github.com/repos/divyanshudhruv/slate/releases/latest";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const CHECK_COOLDOWN_SECS: i64 = 5;
+/// Five minutes between automatic checks; a manual check bypasses it.
+pub const CHECK_COOLDOWN_SECS: i64 = 300;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum UpdateState {

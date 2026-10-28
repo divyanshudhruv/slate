@@ -2,7 +2,6 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -98,7 +97,7 @@ impl HostWorker {
                     let (lock, cvar) = &*wake;
                     let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
                     let _ = cvar
-                        .wait_timeout(guard, Duration::from_millis(50))
+                        .wait_timeout(guard, crate::timings::MEMBER_SYNC)
                         .unwrap_or_else(|e| e.into_inner());
                 }
                 if !running.load(Ordering::Relaxed) {
@@ -202,7 +201,7 @@ struct WorkerState {
     settle: u8,
 }
 
-const SETTLE_PASSES: u8 = 12;
+const SETTLE_PASSES: u8 = crate::timings::SETTLE_PASSES;
 
 fn apply(mut s: Snapshot, last: &mut WorkerState) {
     let host = HWND(s.host as *mut _);

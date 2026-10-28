@@ -11,6 +11,7 @@ struct PartialSettings {
     theme: Option<String>,
     accent: Option<String>,
     restore_session: Option<bool>,
+    preview_delay_ms: Option<u64>,
     tabs: Option<PartialTabs>,
     updates: Option<PartialUpdates>,
     keybinds: Option<PartialKeybinds>,
@@ -392,6 +393,7 @@ fn partial_from_value(value: Value) -> PartialSettings {
         theme: str_field(&value, "theme"),
         accent: str_field(&value, "accent"),
         restore_session: bool_field(&value, "restore_session"),
+        preview_delay_ms: value.get("preview_delay_ms").and_then(Value::as_u64),
         ..PartialSettings::default()
     };
     if let Some(tabs) = value.get("tabs") {
@@ -440,6 +442,9 @@ fn apply(settings: &mut Settings, partial: PartialSettings) {
     }
     if let Some(restore_session) = partial.restore_session {
         settings.restore_session = restore_session;
+    }
+    if let Some(delay) = partial.preview_delay_ms {
+        settings.preview_delay_ms = delay.min(crate::timings::MAX_PREVIEW_DELAY_MS);
     }
     if let Some(tabs) = partial.tabs {
         if let Some(icons) = tabs.icons {
@@ -522,6 +527,7 @@ mod tests {
                 theme: Some("dark".into()),
                 accent: None,
                 restore_session: None,
+                preview_delay_ms: None,
                 tabs: Some(PartialTabs {
                     icons: Some(false),
                     count_badge: None,
