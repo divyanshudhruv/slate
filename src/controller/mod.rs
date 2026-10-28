@@ -331,7 +331,10 @@ impl Controller {
                                 .get(&t.window.hwnd)
                                 .cloned()
                                 .unwrap_or_else(|| t.window.title.clone()),
-                            app: app_name(&t.window.exe_name),
+                            app: self
+                                .rule_for(&t.window.exe_name)
+                                .and_then(|rule| rule.label.clone())
+                                .unwrap_or_else(|| app_name(&t.window.exe_name)),
                             exe: t.window.exe_name.clone(),
                             exe_path: t.window.exe_path.clone(),
                             icon: self.icons.get(&t.window.hwnd).cloned().flatten(),
@@ -469,6 +472,14 @@ impl Controller {
             .borrow()
             .as_ref()
             .and_then(|index| index.by_hwnd.get(&hwnd).copied())
+    }
+
+    /// The first rule naming this executable, compared case-insensitively.
+    pub(super) fn rule_for(&self, exe_name: &str) -> Option<&crate::config::AppRule> {
+        self.settings
+            .rules
+            .iter()
+            .find(|rule| !rule.exe.is_empty() && rule.exe.eq_ignore_ascii_case(exe_name))
     }
 }
 /// Runs the install and update plan before any UI exists; Some means Slate must exit.

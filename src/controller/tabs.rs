@@ -18,6 +18,10 @@ impl Controller {
         if is_blacklisted(&identity.class) || identity.elevated {
             return;
         }
+        let rule = self.rule_for(&identity.exe_name).cloned();
+        if rule.as_ref().is_some_and(|rule| rule.never_host) {
+            return;
+        }
         if self.groups.contains_window(hwnd) {
             return;
         }
@@ -25,12 +29,18 @@ impl Controller {
             return;
         };
         self.styling.insert(hwnd, state);
-        let group = match self.active_group {
-            Some(id) => id,
-            None => {
-                let id = self.groups.create_group(Vec::new());
-                self.active_group = Some(id);
-                id
+        let group = if rule.as_ref().is_some_and(|rule| rule.new_group) {
+            let id = self.groups.create_group(Vec::new());
+            self.active_group = Some(id);
+            id
+        } else {
+            match self.active_group {
+                Some(id) => id,
+                None => {
+                    let id = self.groups.create_group(Vec::new());
+                    self.active_group = Some(id);
+                    id
+                }
             }
         };
         if self.settings.tabs.icons {

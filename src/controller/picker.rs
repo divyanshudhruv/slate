@@ -24,6 +24,11 @@ impl Controller {
             .windows
             .iter()
             .filter(|w| !is_blacklisted(&w.class) && !w.elevated && !hosted.contains(&w.hwnd))
+            .filter(|w| {
+                !self
+                    .rule_for(&w.exe_name)
+                    .is_some_and(|rule| rule.never_host)
+            })
             .map(|w| w.hwnd)
             .collect();
         for hwnd in eligible {
@@ -35,6 +40,11 @@ impl Controller {
             .map(|w| {
                 let reason = if is_blacklisted(&w.class) {
                     Some("This window can't be hosted".to_string())
+                } else if self
+                    .rule_for(&w.exe_name)
+                    .is_some_and(|rule| rule.never_host)
+                {
+                    Some("Blocked by an app rule in config.json".to_string())
                 } else if w.elevated {
                     Some("Run Slate as administrator to host this".to_string())
                 } else if hosted.contains(&w.hwnd) {

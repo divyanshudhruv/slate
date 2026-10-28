@@ -22,9 +22,24 @@ pub struct Settings {
     pub updates: Updates,
     #[serde(default)]
     pub keybinds: Keybinds,
+    #[serde(default)]
+    pub rules: Vec<AppRule>,
     /// Keys Slate does not know yet, kept so a hand edit or a newer build survives a save.
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// A per-app hosting rule, matched on the executable name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppRule {
+    #[serde(default)]
+    pub exe: String,
+    #[serde(default)]
+    pub never_host: bool,
+    #[serde(default)]
+    pub new_group: bool,
+    #[serde(default)]
+    pub label: Option<String>,
 }
 
 /// How the host picks its palette; unknown values warn and fall back to the system.
@@ -139,6 +154,7 @@ impl Default for Settings {
             tabs: Tabs::default(),
             updates: Updates::default(),
             keybinds: Keybinds::default(),
+            rules: Vec::new(),
             extra: serde_json::Map::new(),
         }
     }
@@ -383,6 +399,20 @@ mod tests {
             seen.push(chord);
         }
         assert!(seen.contains(&KeyAction::SelectTab.default()));
+    }
+
+    #[test]
+    fn app_rules_round_trip() {
+        let mut settings = Settings::default();
+        settings.rules.push(AppRule {
+            exe: "chrome.exe".into(),
+            never_host: true,
+            new_group: true,
+            label: Some("Browser".into()),
+        });
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.rules, settings.rules);
     }
 
     #[test]
