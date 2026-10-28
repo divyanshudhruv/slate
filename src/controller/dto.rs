@@ -100,6 +100,8 @@ pub enum Cmd {
     DeleteSet {
         id: u64,
     },
+    ExportSets,
+    ImportSets,
     ToggleTabBadge,
     ToggleHoverPreview,
     ToggleTheme,

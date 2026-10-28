@@ -3,6 +3,7 @@ pub mod capture;
 pub mod compat;
 pub mod enumerate;
 pub mod events;
+pub mod filedialog;
 pub mod highlight;
 pub mod host;
 pub mod icon;

@@ -102,6 +102,79 @@ impl Controller {
         }
     }
 
+    pub(super) fn export_sets(&mut self, cx: &mut gpui::Context<Self>) {
+        self.saved_menu_open = false;
+        let Some(path) =
+            crate::win::filedialog::choose_json(false, "Export saved sets", "slate-sets.json")
+        else {
+            return;
+        };
+        let sets = config::SavedSets {
+            schema_version: config::SCHEMA_VERSION,
+            sets: self.saved_sets.clone(),
+        };
+        let toast = match config::save_sets_at(&path, &sets) {
+            Ok(()) => super::dto::update_toast(
+                "Sets exported",
+                ely_gpui_component::primitives::Severity::Success,
+                format!("{} sets written to {}", sets.sets.len(), path.display()),
+            ),
+            Err(err) => super::dto::update_toast(
+                "Export failed",
+                ely_gpui_component::primitives::Severity::Danger,
+                err.to_string(),
+            ),
+        };
+        self.push_toast(toast, cx);
+    }
+
+    pub(super) fn import_sets(&mut self, cx: &mut gpui::Context<Self>) {
+        self.saved_menu_open = false;
+        let Some(path) = crate::win::filedialog::choose_json(true, "Import saved sets", "") else {
+            return;
+        };
+        let toast = match config::read_sets(&path) {
+            Ok(imported) => {
+                let count = imported.sets.len();
+                self.merge_sets(imported);
+                self.persist_sets();
+                self.refresh_saved_avail();
+                super::dto::update_toast(
+                    "Sets imported",
+                    ely_gpui_component::primitives::Severity::Success,
+                    format!("{count} sets merged from {}", path.display()),
+                )
+            }
+            Err(_) => super::dto::update_toast(
+                "Import failed",
+                ely_gpui_component::primitives::Severity::Danger,
+                format!("{} is not a readable Slate sets file", path.display()),
+            ),
+        };
+        self.push_toast(toast, cx);
+    }
+
+    /// Adds imported sets, replacing same-named ones so a re-import updates in place.
+    fn merge_sets(&mut self, imported: config::SavedSets) {
+        let mut next = self.saved_sets.iter().map(|s| s.id).max().unwrap_or(0) + 1;
+        for set in imported.sets {
+            if let Some(existing) = self
+                .saved_sets
+                .iter_mut()
+                .find(|s| s.name.eq_ignore_ascii_case(&set.name))
+            {
+                existing.tabs = set.tabs;
+            } else {
+                self.saved_sets.push(config::SavedSet {
+                    id: next,
+                    name: set.name,
+                    tabs: set.tabs,
+                });
+                next += 1;
+            }
+        }
+    }
+
     pub(super) fn restore_set(&mut self, id: u64) {
         let Some(set) = self.saved_sets.iter().find(|s| s.id == id).cloned() else {
             return;

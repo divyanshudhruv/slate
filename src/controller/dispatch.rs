@@ -102,6 +102,8 @@ impl Controller {
             Cmd::CommitRenameSet { id, name } => self.commit_rename_set(id, name),
             Cmd::RestoreSet { id } => self.restore_set(id),
             Cmd::DeleteSet { id } => self.delete_set(id),
+            Cmd::ExportSets => self.export_sets(cx),
+            Cmd::ImportSets => self.import_sets(cx),
             Cmd::ToggleTabBadge => self.toggle_tab_badge(),
             Cmd::ToggleHoverPreview => self.toggle_hover_preview(),
             Cmd::ToggleTheme => self.toggle_theme(cx),

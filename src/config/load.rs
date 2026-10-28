@@ -332,22 +332,29 @@ fn value_kind(value: &Value) -> u8 {
 
 pub fn load_sets() -> SavedSets {
     let path = paths::sets_path();
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return SavedSets::default();
-    };
-    match serde_json::from_str::<Value>(&text) {
-        Ok(value) => {
-            if schema_version_of(&value) > SCHEMA_VERSION as u64 {
-                backup(&path);
-                return SavedSets::default();
-            }
-            parse_sets(value)
-        }
-        Err(_) => {
-            backup(&path);
+    match read_sets(&path) {
+        Ok(sets) => sets,
+        Err(bad) => {
+            backup(&bad);
             SavedSets::default()
         }
     }
+}
+
+/// Reads a set file from any path; used by import as well as the live file.
+pub fn read_sets(path: &Path) -> Result<SavedSets, std::path::PathBuf> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(_) => return Err(path.to_path_buf()),
+    };
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(_) => return Err(path.to_path_buf()),
+    };
+    if schema_version_of(&value) > SCHEMA_VERSION as u64 {
+        return Err(path.to_path_buf());
+    }
+    Ok(parse_sets(value))
 }
 
 pub fn load_session() -> Session {
@@ -397,7 +404,6 @@ fn assign_ids(sets: &mut [SavedSet]) {
     }
 }
 
-
 fn migrate(mut value: Value) -> Value {
     if !value.is_object() {
         return value;
@@ -432,7 +438,6 @@ fn backup_into(dir: &Path, path: &Path) {
 mod tests {
     use super::*;
 
-    #[test]
     #[test]
     fn settings_only_override_what_the_file_sets() {
         let s = settings_from_value(serde_json::json!({
