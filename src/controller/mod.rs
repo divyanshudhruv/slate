@@ -75,6 +75,7 @@ pub struct Controller {
     keybind_draft: Vec<Option<crate::core::keys::Chord>>,
     info_cache: RefCell<Option<Arc<HostInfo>>>,
     index_cache: RefCell<Option<Index>>,
+    save_error: RefCell<Option<String>>,
     _pump: Option<WinEventPump>,
 }
 
@@ -143,6 +144,7 @@ impl Controller {
             keybind_draft: Vec::new(),
             info_cache: RefCell::new(None),
             index_cache: RefCell::new(None),
+            save_error: RefCell::new(None),
             _pump: WinEventPump::install(),
             toaster,
         };
@@ -248,6 +250,7 @@ impl Controller {
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {
+        self.flush_save_error(cx);
         let mut changed = self.drain_events();
         let shortcuts = self
             .shortcuts

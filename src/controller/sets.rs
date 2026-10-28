@@ -131,7 +131,7 @@ impl Controller {
             schema_version: config::SCHEMA_VERSION,
             sets: self.saved_sets.clone(),
         };
-        let _ = config::save_sets(&sets);
+        self.note_save(config::save_sets(&sets));
     }
 
     fn current_tabs(&self) -> Vec<config::SavedTab> {
@@ -165,9 +165,9 @@ impl Controller {
     }
 
     pub(super) fn persist_session(&self) {
-        let _ = config::save_session(&config::Session {
+        self.note_save(config::save_session(&config::Session {
             tabs: self.current_tabs(),
-        });
+        }));
     }
 
     pub(super) fn session_signature(&self) -> u64 {

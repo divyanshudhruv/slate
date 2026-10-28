@@ -25,7 +25,31 @@ impl Controller {
     }
 
     pub(super) fn save_settings(&self) {
-        let _ = config::save(&self.settings);
+        self.note_save(config::save(&self.settings));
+    }
+
+    /// Remembers the first write failure so the next tick can tell the user.
+    pub(super) fn note_save(&self, result: std::io::Result<()>) {
+        if let Err(err) = result {
+            tracing::warn!("config write failed: {err}");
+            self.save_error.replace(Some(err.to_string()));
+        }
+    }
+
+    pub(super) fn flush_save_error(&mut self, cx: &mut Context<Self>) {
+        let Some(err) = self.save_error.borrow_mut().take() else {
+            return;
+        };
+        let toast = super::dto::update_toast(
+            "Settings not saved",
+            Severity::Danger,
+            format!(
+                "{err}. Check that {} is writable.",
+                config::paths::data_dir().display()
+            ),
+        );
+        self.toaster
+            .update(cx, |toaster, cx| toaster.push(toast, cx));
     }
 
     /// Re-reads config.json and settings.json so a hand edit lands without a restart.
