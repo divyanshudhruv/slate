@@ -341,6 +341,24 @@ fn picking_spinner(cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// A soft edge over the scrolling strip; `solid_left` picks which end keeps the background.
+fn fade(bg: gpui::Hsla, solid_left: bool) -> Div {
+    let clear = bg.opacity(0.0);
+    let (near, far) = if solid_left { (bg, clear) } else { (clear, bg) };
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .when(solid_left, |edge| edge.left_0())
+        .when(!solid_left, |edge| edge.right_0())
+        .w(px(FADE_W))
+        .bg(linear_gradient(
+            90.0,
+            linear_color_stop(near, 0.0),
+            linear_color_stop(far, 1.0),
+        ))
+}
+
 fn tab_strip(
     info: &HostInfo,
     tab_bar: SlateTabBar,
@@ -350,29 +368,8 @@ fn tab_strip(
     let handle = tab_scroll.clone();
     let (offset, max) = (handle.offset().x, handle.max_offset().x);
     let overflowing = max > gpui::Pixels::ZERO;
-    let clear = bg.opacity(0.0);
-    let left_fade = div()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .left_0()
-        .w(px(FADE_W))
-        .bg(linear_gradient(
-            90.0,
-            linear_color_stop(bg, 0.0),
-            linear_color_stop(clear, 1.0),
-        ));
-    let right_fade = div()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .right_0()
-        .w(px(FADE_W))
-        .bg(linear_gradient(
-            90.0,
-            linear_color_stop(clear, 0.0),
-            linear_color_stop(bg, 1.0),
-        ));
+    let left_fade = fade(bg, true);
+    let right_fade = fade(bg, false);
     div()
         .relative()
         .flex_1()

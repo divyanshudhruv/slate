@@ -219,6 +219,21 @@ pub struct HostInfo {
     pub beta_channel: bool,
 }
 
+impl HostInfo {
+    /// True when anything above the tab strip is showing, so the empty state must not draw.
+    pub fn overlaying(&self) -> bool {
+        self.overlay
+            || self.dialog.is_some()
+            || self.tab_menu_open
+            || self.picker_open
+            || self.saved_menu_open
+            || self.tab_menu.is_some()
+            || self.renaming.is_some()
+            || self.saved_prompt.is_some()
+            || self.hover_preview.is_some()
+    }
+}
+
 #[derive(Clone)]
 pub struct TabMenu {
     pub tab: TabId,

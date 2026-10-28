@@ -11,7 +11,9 @@ use gpui::{
     RenderImage, ScrollHandle, Size, Styled, Subscription, Window,
 };
 
-use crate::controller::{BannerAction, BannerKind, Cmd, Controller, SavedPrompt, TabInfo};
+use crate::controller::{
+    BannerAction, BannerKind, Cmd, Controller, HostInfo, SavedPrompt, TabInfo,
+};
 use crate::core::{GroupId, TabId, UpdateState};
 use crate::ui::tab_bar::{SlateTab, SlateTabBar, TabDrag, TabIcon};
 use crate::ui::window_hwnd;
@@ -27,6 +29,52 @@ use art::{empty_state, grayscale_mark, key_cap};
 
 fn hwnd_of(window: &Window) -> Option<isize> {
     window_hwnd(window)
+}
+
+/// Which surfaces above the tab strip are open, snapshotted when the input closures are built.
+#[derive(Clone, Copy)]
+struct Surfaces {
+    overlay: bool,
+    tab_menu: bool,
+    picker: bool,
+    saved: bool,
+    ctx_menu: bool,
+    renaming: bool,
+    prompt: bool,
+    preview: bool,
+    dialog: bool,
+}
+
+impl Surfaces {
+    fn of(info: &HostInfo) -> Self {
+        Self {
+            overlay: info.overlay,
+            tab_menu: info.tab_menu_open,
+            picker: info.picker_open,
+            saved: info.saved_menu_open,
+            ctx_menu: info.tab_menu.is_some(),
+            renaming: info.renaming.is_some(),
+            prompt: info.saved_prompt.is_some(),
+            preview: info.hover_preview.is_some(),
+            dialog: info.dialog.is_some(),
+        }
+    }
+
+    /// A click in the body closes these; a rename or a prompt owns its own focus.
+    fn dismissable(&self) -> bool {
+        self.overlay || self.tab_menu || self.picker || self.saved || self.ctx_menu || self.dialog
+    }
+
+    fn escapable(&self) -> bool {
+        self.overlay
+            || self.tab_menu
+            || self.picker
+            || self.saved
+            || self.renaming
+            || self.prompt
+            || self.preview
+            || self.dialog
+    }
 }
 
 pub struct HostWindow {
@@ -166,6 +214,116 @@ fn banner_strip(
     Some(banner.into_any_element())
 }
 
+/// Builds the tab strip; every behaviour only forwards a `Cmd` to the controller.
+fn build_tab_bar(
+    controller: &Entity<Controller>,
+    info: &HostInfo,
+    cx: &Context<HostWindow>,
+) -> SlateTabBar {
+    let group = info.group;
+    let palette = cx.theme().palette();
+    let mut tab_bar = SlateTabBar::new("host-tabs");
+    for TabInfo {
+        id,
+        title,
+        icon,
+        accent,
+        ..
+    } in &info.tabs
+    {
+        let icon = match (info.icons_in_tabs, icon) {
+            (true, Some(image)) => TabIcon::Real(image.clone()),
+            _ => TabIcon::Glyph(ely_gpui_component::primitives::IconName::AppWindow),
+        };
+        let color = accent.map(|index| palette.hue(index, "tab accent"));
+        tab_bar = tab_bar.tab(SlateTab::new(id.0.to_string(), title.clone(), icon).accent(color));
+    }
+    if let Some(active) = &info.active {
+        tab_bar = tab_bar.selected(gpui::SharedString::from(active.0.to_string()));
+    }
+    tab_bar = tab_bar.on_select({
+        let ctrl = controller.clone();
+        move |id, _w, cx| {
+            if let (Some(g), Ok(n)) = (group, id.to_string().parse::<u64>()) {
+                ctrl.update(cx, |c, cx| {
+                    c.dispatch(
+                        Cmd::SelectTab {
+                            group: g,
+                            tab: TabId(n),
+                        },
+                        cx,
+                    );
+                });
+            }
+        }
+    });
+    tab_bar = tab_bar.on_close({
+        let ctrl = controller.clone();
+        move |id, _w, cx| {
+            if let (Some(g), Ok(n)) = (group, id.to_string().parse::<u64>()) {
+                ctrl.update(cx, |c, cx| {
+                    c.dispatch(
+                        Cmd::Ungroup {
+                            group: g,
+                            tab: TabId(n),
+                        },
+                        cx,
+                    );
+                });
+            }
+        }
+    });
+    tab_bar = tab_bar.on_reorder({
+        let ctrl = controller.clone();
+        move |from, to, _w, cx| {
+            if let Some(g) = group {
+                ctrl.update(cx, |c, cx| {
+                    c.dispatch(Cmd::ReorderTab { group: g, from, to }, cx);
+                });
+            }
+        }
+    });
+    tab_bar = tab_bar.on_context({
+        let ctrl = controller.clone();
+        move |id, position, _w, cx| {
+            if let (Some(_g), Ok(n)) = (group, id.to_string().parse::<u64>()) {
+                ctrl.update(cx, |c, cx| {
+                    c.dispatch(
+                        Cmd::OpenTabMenu {
+                            tab: TabId(n),
+                            at: (position.x.as_f32(), position.y.as_f32()),
+                        },
+                        cx,
+                    );
+                });
+            }
+        }
+    });
+    tab_bar = tab_bar.on_tab_hover({
+        let ctrl = controller.clone();
+        move |id, hovered, bounds, _window, cx| {
+            let (Some(_g), Ok(n)) = (group, id.to_string().parse::<u64>()) else {
+                return;
+            };
+            let tab = TabId(n);
+            if hovered {
+                let anchor = (
+                    bounds.origin.x.as_f32(),
+                    bounds.origin.y.as_f32(),
+                    bounds.size.width.as_f32(),
+                    bounds.size.height.as_f32(),
+                );
+                ctrl.update(cx, |c, cx| {
+                    c.dispatch(Cmd::PreviewTab { tab, anchor }, cx);
+                });
+            } else {
+                ctrl.update(cx, |c, cx| c.dispatch(Cmd::PreviewHide { tab }, cx));
+            }
+        }
+    });
+    tab_bar
+}
+
 impl Render for HostWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let controller = self.controller.clone();
@@ -216,107 +374,8 @@ impl Render for HostWindow {
         let info = self.controller.read_with(cx, |c, _| c.host_info());
         let group = info.group;
 
-        let mut tab_bar = SlateTabBar::new("host-tabs");
         let palette = cx.theme().palette();
-        for TabInfo {
-            id,
-            title,
-            icon,
-            accent,
-            ..
-        } in &info.tabs
-        {
-            let icon = match (info.icons_in_tabs, icon) {
-                (true, Some(image)) => TabIcon::Real(image.clone()),
-                _ => TabIcon::Glyph(ely_gpui_component::primitives::IconName::AppWindow),
-            };
-            let color = accent.map(|index| palette.hue(index, "tab accent"));
-            tab_bar =
-                tab_bar.tab(SlateTab::new(id.0.to_string(), title.clone(), icon).accent(color));
-        }
-        if let Some(active) = &info.active {
-            tab_bar = tab_bar.selected(gpui::SharedString::from(active.0.to_string()));
-        }
-        tab_bar = tab_bar.on_select({
-            let ctrl = controller.clone();
-            move |id, _w, cx| {
-                if let (Some(g), Ok(n)) = (group, id.to_string().parse::<u64>()) {
-                    ctrl.update(cx, |c, cx| {
-                        c.dispatch(
-                            Cmd::SelectTab {
-                                group: g,
-                                tab: TabId(n),
-                            },
-                            cx,
-                        );
-                    });
-                }
-            }
-        });
-        tab_bar = tab_bar.on_close({
-            let ctrl = controller.clone();
-            move |id, _w, cx| {
-                if let (Some(g), Ok(n)) = (group, id.to_string().parse::<u64>()) {
-                    ctrl.update(cx, |c, cx| {
-                        c.dispatch(
-                            Cmd::Ungroup {
-                                group: g,
-                                tab: TabId(n),
-                            },
-                            cx,
-                        );
-                    });
-                }
-            }
-        });
-        tab_bar = tab_bar.on_reorder({
-            let ctrl = controller.clone();
-            move |from, to, _w, cx| {
-                if let Some(g) = group {
-                    ctrl.update(cx, |c, cx| {
-                        c.dispatch(Cmd::ReorderTab { group: g, from, to }, cx);
-                    });
-                }
-            }
-        });
-        tab_bar = tab_bar.on_context({
-            let ctrl = controller.clone();
-            move |id, position, _w, cx| {
-                if let (Some(_g), Ok(n)) = (group, id.to_string().parse::<u64>()) {
-                    ctrl.update(cx, |c, cx| {
-                        c.dispatch(
-                            Cmd::OpenTabMenu {
-                                tab: TabId(n),
-                                at: (position.x.as_f32(), position.y.as_f32()),
-                            },
-                            cx,
-                        );
-                    });
-                }
-            }
-        });
-        tab_bar = tab_bar.on_tab_hover({
-            let ctrl = controller.clone();
-            move |id, hovered, bounds, _window, cx| {
-                let (Some(_g), Ok(n)) = (group, id.to_string().parse::<u64>()) else {
-                    return;
-                };
-                let tab = TabId(n);
-                if hovered {
-                    let anchor = (
-                        bounds.origin.x.as_f32(),
-                        bounds.origin.y.as_f32(),
-                        bounds.size.width.as_f32(),
-                        bounds.size.height.as_f32(),
-                    );
-                    ctrl.update(cx, |c, cx| {
-                        c.dispatch(Cmd::PreviewTab { tab, anchor }, cx);
-                    });
-                } else {
-                    ctrl.update(cx, |c, cx| c.dispatch(Cmd::PreviewHide { tab }, cx));
-                }
-            }
-        });
+        let tab_bar = build_tab_bar(&controller, &info, cx);
 
         let viewport = window.viewport_size();
 
@@ -335,35 +394,28 @@ impl Render for HostWindow {
 
         let dismiss = {
             let ctrl = controller.clone();
-            let (overlay, tab_menu, picker, saved, ctx_menu, dialog) = (
-                info.overlay,
-                info.tab_menu_open,
-                info.picker_open,
-                info.saved_menu_open,
-                info.tab_menu.is_some(),
-                info.dialog.is_some(),
-            );
+            let open = Surfaces::of(&info);
             move |_ev: &gpui::MouseDownEvent, _w: &mut Window, cx: &mut App| {
-                if !(overlay || tab_menu || picker || saved || ctx_menu || dialog) {
+                if !open.dismissable() {
                     return;
                 }
                 ctrl.update(cx, |c, cx| {
-                    if overlay {
+                    if open.overlay {
                         c.dispatch(Cmd::SetOverlay(false), cx);
                     }
-                    if tab_menu {
+                    if open.tab_menu {
                         c.dispatch(Cmd::SetTabMenu(false), cx);
                     }
-                    if picker {
+                    if open.picker {
                         c.dispatch(Cmd::SetPickerOpen(false), cx);
                     }
-                    if saved {
+                    if open.saved {
                         c.dispatch(Cmd::SetSavedMenu(false), cx);
                     }
-                    if ctx_menu {
+                    if open.ctx_menu {
                         c.dispatch(Cmd::CloseTabMenu, cx);
                     }
-                    if dialog {
+                    if open.dialog {
                         c.dispatch(Cmd::CloseDialog, cx);
                     }
                 });
@@ -372,19 +424,10 @@ impl Render for HostWindow {
 
         let escape = {
             let ctrl = controller.clone();
-            let (overlay, tab_menu, picker, saved, renaming, prompt, preview, dialog) = (
-                info.overlay,
-                info.tab_menu_open,
-                info.picker_open,
-                info.saved_menu_open,
-                info.renaming.is_some(),
-                info.saved_prompt.is_some(),
-                info.hover_preview.is_some(),
-                info.dialog.is_some(),
-            );
+            let open = Surfaces::of(&info);
             move |ev: &gpui::KeyDownEvent, _w: &mut Window, cx: &mut App| {
                 let key = ev.keystroke.key.as_str();
-                if picker && matches!(key, "up" | "down" | "enter") {
+                if open.picker && matches!(key, "up" | "down" | "enter") {
                     cx.stop_propagation();
                     ctrl.update(cx, |c, cx| match key {
                         "up" => c.dispatch(Cmd::MovePickerCursor { delta: -1 }, cx),
@@ -393,7 +436,7 @@ impl Render for HostWindow {
                     });
                     return;
                 }
-                if tab_menu && matches!(key, "up" | "down" | "enter") {
+                if open.tab_menu && matches!(key, "up" | "down" | "enter") {
                     cx.stop_propagation();
                     ctrl.update(cx, |c, cx| match key {
                         "up" => c.dispatch(Cmd::MoveTabMenuCursor { delta: -1 }, cx),
@@ -405,40 +448,32 @@ impl Render for HostWindow {
                 if key != "escape" {
                     return;
                 }
-                if !(overlay
-                    || tab_menu
-                    || picker
-                    || saved
-                    || renaming
-                    || prompt
-                    || preview
-                    || dialog)
-                {
+                if !open.escapable() {
                     return;
                 }
                 ctrl.update(cx, |c, cx| {
-                    if overlay {
+                    if open.overlay {
                         c.dispatch(Cmd::SetOverlay(false), cx);
                     }
-                    if tab_menu {
+                    if open.tab_menu {
                         c.dispatch(Cmd::SetTabMenu(false), cx);
                     }
-                    if picker {
+                    if open.picker {
                         c.dispatch(Cmd::SetPickerOpen(false), cx);
                     }
-                    if saved {
+                    if open.saved {
                         c.dispatch(Cmd::SetSavedMenu(false), cx);
                     }
-                    if renaming {
+                    if open.renaming {
                         c.dispatch(Cmd::CancelRename, cx);
                     }
-                    if prompt {
+                    if open.prompt {
                         c.dispatch(Cmd::CancelSavedPrompt, cx);
                     }
-                    if preview {
+                    if open.preview {
                         c.dispatch(Cmd::DismissPreview, cx);
                     }
-                    if dialog {
+                    if open.dialog {
                         c.dispatch(Cmd::CloseDialog, cx);
                     }
                 });
@@ -476,16 +511,7 @@ impl Render for HostWindow {
             .on_drop::<TabDrag>(detach_out)
             .child(title.element);
 
-        let overlaying = info.overlay
-            || info.dialog.is_some()
-            || info.tab_menu_open
-            || info.picker_open
-            || info.saved_menu_open
-            || info.tab_menu.is_some()
-            || info.renaming.is_some()
-            || info.saved_prompt.is_some()
-            || info.hover_preview.is_some();
-        let body = match (info.tabs.is_empty(), overlaying) {
+        let body = match (info.tabs.is_empty(), info.overlaying()) {
             (true, _) => {
                 let caption = Caption::new("No windows yet").into_any_element();
                 let hint = div()

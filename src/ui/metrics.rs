@@ -20,5 +20,14 @@ pub const BADGE_OFFSET: f32 = -3.0;
 
 pub const CARD_W: f32 = 224.0;
 pub const CARD_IMAGE_H: f32 = 126.0;
+pub const CARD_H: f32 = CARD_IMAGE_H + 40.0;
 pub const CARD_MARGIN: f32 = 8.0;
 pub const CARD_GAP: f32 = 6.0;
+
+pub const OVERLAY_MARGIN: f32 = 8.0;
+pub const DIVIDER_H: f32 = 1.0;
+pub const TAB_GAP: f32 = 4.0;
+
+pub const EMPTY_MARK: f32 = 128.0;
+pub const EMPTY_MARK_OPACITY: f32 = 0.18;
+pub const KEY_CAP_MIN_W_RATIO: f32 = 1.8;

@@ -3,14 +3,15 @@ use std::rc::Rc;
 use ely_gpui_component::motion;
 use ely_gpui_component::theme::{ActiveTheme, Elevation, Radius};
 use gpui::{
-    div, px, Animation, AnimationExt, App, Div, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Point, Role, Size, StatefulInteractiveElement, Styled, Window,
+    canvas, div, px, Animation, AnimationExt, App, Bounds, Div, Entity, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, Point, Role, Size, StatefulInteractiveElement,
+    Styled, Window,
 };
 
 pub(super) type Action = Rc<dyn Fn(&mut Window, &mut App)>;
 
 pub(super) use crate::ui::metrics::{MENU_W, MENU_W_SAVED, MENU_W_TAB_MENU};
-use crate::ui::metrics::{PANEL_PAD, ROW_H};
+use crate::ui::metrics::{OVERLAY_MARGIN, PANEL_PAD, ROW_H};
 
 pub(super) fn menu_panel(width: f32, cx: &App) -> Div {
     let theme = cx.theme();
@@ -40,13 +41,15 @@ pub(super) fn overlay_layer(
     enter: Animation,
     panel: Div,
 ) -> gpui::AnyElement {
-    const MARGIN: f32 = 8.0;
     let vw = viewport.width.as_f32();
     let vh = viewport.height.as_f32();
-    let avail = (vh - MARGIN * 2.0).max(0.0);
+    let avail = (vh - OVERLAY_MARGIN * 2.0).max(0.0);
     let panel_h = height.min(avail);
-    let left = at.x.as_f32().min(vw - width - MARGIN).max(0.0);
-    let top = at.y.as_f32().min((vh - panel_h - MARGIN).max(0.0)).max(0.0);
+    let left = at.x.as_f32().min(vw - width - OVERLAY_MARGIN).max(0.0);
+    let top =
+        at.y.as_f32()
+            .min((vh - panel_h - OVERLAY_MARGIN).max(0.0))
+            .max(0.0);
     div()
         .absolute()
         .left(px(left))
@@ -68,4 +71,23 @@ pub(super) fn overlay_layer(
 
 pub(super) fn enter_animation(cx: &App) -> Animation {
     Animation::new(motion::duration(motion::FAST, cx)).with_easing(motion::ease_out_cubic)
+}
+
+/// Tracks the trigger's bounds so its overlay can open against it; a move asks for one repaint.
+pub(super) fn anchor_probe(anchor: Entity<Bounds<Pixels>>) -> impl IntoElement {
+    canvas(
+        move |bounds, window, cx| {
+            let changed = anchor.update(cx, |tracked, _| {
+                std::mem::replace(tracked, bounds) != bounds
+            });
+            if changed {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }

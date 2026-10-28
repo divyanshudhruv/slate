@@ -6,7 +6,7 @@ use gpui::{div, px, AnimationExt, App, Pixels, Size, Window};
 
 use super::overlays::enter_animation;
 use crate::controller::{HoverPreview, TabInfo};
-use crate::ui::metrics::{CARD_GAP, CARD_IMAGE_H, CARD_MARGIN, CARD_W};
+use crate::ui::metrics::{CARD_GAP, CARD_H, CARD_IMAGE_H, CARD_MARGIN, CARD_W};
 
 pub(crate) fn hover_card(
     cx: &App,
@@ -15,20 +15,19 @@ pub(crate) fn hover_card(
     viewport: Size<Pixels>,
     on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
 ) -> gpui::AnyElement {
-    const CARD_H: f32 = CARD_IMAGE_H + 40.0;
-    const MARGIN: f32 = CARD_MARGIN;
-    const GAP: f32 = CARD_GAP;
     let theme = cx.theme();
     let colors = &theme.colors;
     let rad_lg = theme.radius(Radius::Lg);
     let (x, y, _w, h) = preview.anchor;
     let vh = viewport.height.as_f32();
-    let left = x.min(viewport.width.as_f32() - CARD_W - MARGIN).max(MARGIN);
-    let below = y + h + GAP;
-    let top = if below + CARD_H <= vh - MARGIN {
+    let left = x
+        .min(viewport.width.as_f32() - CARD_W - CARD_MARGIN)
+        .max(CARD_MARGIN);
+    let below = y + h + CARD_GAP;
+    let top = if below + CARD_H <= vh - CARD_MARGIN {
         below
     } else {
-        (y - GAP - CARD_H).max(MARGIN)
+        (y - CARD_GAP - CARD_H).max(CARD_MARGIN)
     };
 
     let image = match preview.image.clone() {

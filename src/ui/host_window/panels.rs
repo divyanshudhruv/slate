@@ -6,20 +6,20 @@ use ely_gpui_component::theme::{ActiveTheme, ControlSize, IconSize, Radius, Text
 use ely_gpui_component::typography::{Ellipsis, Kbd};
 use gpui::prelude::*;
 use gpui::{
-    canvas, div, px, AnyElement, App, Bounds, ClipboardItem, Div, Entity, FontWeight, MouseButton,
-    Point, Role, Styled, Window,
+    div, px, AnyElement, App, Bounds, ClipboardItem, Div, Entity, FontWeight, MouseButton, Point,
+    Role, Styled, Window,
 };
 
 use super::overlays::{
-    enter_animation, menu_height, menu_panel, overlay_layer, Action, MENU_W, MENU_W_SAVED,
-    MENU_W_TAB_MENU,
+    anchor_probe, enter_animation, menu_height, menu_panel, overlay_layer, Action, MENU_W,
+    MENU_W_SAVED, MENU_W_TAB_MENU,
 };
 use super::HostCtx;
 use crate::controller::{Cmd, Controller, PickerRow, SavedSetInfo, TabInfo};
 use crate::core::{GroupId, TabId};
 
 use crate::ui::metrics::{
-    BADGE_FONT, BADGE_OFFSET, BADGE_PAD_X, BADGE_SIZE, SWATCH_H, SWATCH_H_ACTIVE,
+    BADGE_FONT, BADGE_OFFSET, BADGE_PAD_X, BADGE_SIZE, DIVIDER_H, SWATCH_H, SWATCH_H_ACTIVE,
 };
 
 pub(super) fn tab_overflow(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
@@ -101,22 +101,7 @@ pub(super) fn tab_overflow(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>
         .occlude()
         .on_mouse_down(MouseButton::Left, |_ev, _w, cx| cx.stop_propagation())
         .child(trigger)
-        .child({
-            let anchor = anchor.clone();
-            canvas(
-                move |bounds, window, cx| {
-                    let changed = anchor.update(cx, |a, _| std::mem::replace(a, bounds) != bounds);
-                    if changed {
-                        window.request_animation_frame();
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-        })
+        .child(anchor_probe(anchor.clone()))
         .into_any_element();
 
     let overlay = open.then(|| {
@@ -160,22 +145,7 @@ pub(super) fn picker(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
                     }
                 }),
         )
-        .child({
-            let anchor = anchor.clone();
-            canvas(
-                move |bounds, window, cx| {
-                    let changed = anchor.update(cx, |a, _| std::mem::replace(a, bounds) != bounds);
-                    if changed {
-                        window.request_animation_frame();
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-        });
+        .child(anchor_probe(anchor.clone()));
 
     let overlay = info.picker_open.then(|| {
         let mut rows: Vec<AnyElement> = Vec::with_capacity(info.picker_rows.len() + 1);
@@ -239,22 +209,7 @@ pub(super) fn saved(ctx: &mut HostCtx) -> (AnyElement, Option<AnyElement>) {
                     }
                 }),
         )
-        .child({
-            let anchor = anchor.clone();
-            canvas(
-                move |bounds, window, cx| {
-                    let changed = anchor.update(cx, |a, _| std::mem::replace(a, bounds) != bounds);
-                    if changed {
-                        window.request_animation_frame();
-                    }
-                },
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-        });
+        .child(anchor_probe(anchor.clone()));
 
     let overlay = info.saved_menu_open.then(|| {
         let save_enabled = !info.tabs.is_empty();
@@ -462,6 +417,20 @@ struct RowMarks {
     highlighted: bool,
 }
 
+/// The frame every menu row shares: padding, radius and type size, so rows line up.
+fn row_frame(cx: &App) -> Div {
+    let theme = cx.theme();
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .w_full()
+        .px_2()
+        .py_1()
+        .rounded(theme.radius(Radius::Sm))
+        .text_size(theme.text_size(TextSize::Sm))
+}
+
 fn overflow_row(
     ix: usize,
     tab: &TabInfo,
@@ -474,8 +443,7 @@ fn overflow_row(
     let theme = cx.theme();
     let colors = &theme.colors;
     let icon_px = theme.icon_size(IconSize::Sm).to_pixels(theme.base_rem());
-    let rad_sm = theme.radius(Radius::Sm);
-    let (text_sm, text_xs) = (theme.text_size(TextSize::Sm), theme.text_size(TextSize::Xs));
+    let text_xs = theme.text_size(TextSize::Xs);
     let RowMarks {
         active,
         highlighted,
@@ -483,18 +451,10 @@ fn overflow_row(
     let (app, exe, icon) = (&tab.app, &tab.exe, &tab.icon);
     let tab_id = tab.id;
     let ctrl = controller.clone();
-    div()
+    row_frame(cx)
         .id(("tab-overflow-row", ix))
         .role(Role::MenuItem)
         .aria_label(app.clone())
-        .flex()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px_2()
-        .py_1()
-        .rounded(rad_sm)
-        .text_size(text_sm)
         .text_color(if active { colors.fg } else { colors.fg_muted })
         .cursor_pointer()
         .when(highlighted, |el| el.bg(colors.hover))
@@ -546,10 +506,7 @@ fn overflow_row(
 }
 
 fn picker_action_row(count: usize, controller: &Entity<Controller>, cx: &App) -> AnyElement {
-    let theme = cx.theme();
-    let colors = &theme.colors;
-    let rad_sm = theme.radius(Radius::Sm);
-    let text_sm = theme.text_size(TextSize::Sm);
+    let colors = &cx.theme().colors;
     let picking = count == 0;
     let (icon, color) = if picking {
         (IconName::Plus, colors.fg)
@@ -568,18 +525,10 @@ fn picker_action_row(count: usize, controller: &Entity<Controller>, cx: &App) ->
     };
     let picked_label = count.to_string();
     let ctrl = controller.clone();
-    div()
+    row_frame(cx)
         .id("picker-action-row")
         .role(Role::MenuItem)
         .aria_label(aria_label)
-        .flex()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px_2()
-        .py_1()
-        .rounded(rad_sm)
-        .text_size(text_sm)
         .text_color(color)
         .cursor_pointer()
         .hover(|style| style.bg(colors.hover))
@@ -610,21 +559,12 @@ fn picker_row(
     let theme = cx.theme();
     let colors = &theme.colors;
     let icon_px = theme.icon_size(IconSize::Sm).to_pixels(theme.base_rem());
-    let rad_sm = theme.radius(Radius::Sm);
-    let (text_sm, text_xs) = (theme.text_size(TextSize::Sm), theme.text_size(TextSize::Xs));
+    let text_xs = theme.text_size(TextSize::Xs);
     let blocked = row.reason.is_some();
-    let mut el = div()
+    let mut el = row_frame(cx)
         .id(("picker-row", ix))
         .role(Role::MenuItem)
         .aria_label(row.title.clone())
-        .flex()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px_2()
-        .py_1()
-        .rounded(rad_sm)
-        .text_size(text_sm)
         .text_color(if blocked { colors.fg_subtle } else { colors.fg })
         .when(blocked, |el| el.opacity(0.5));
     if !blocked {
@@ -684,22 +624,11 @@ fn picker_row(
 }
 
 fn saved_save_row(save_enabled: bool, controller: &Entity<Controller>, cx: &App) -> AnyElement {
-    let theme = cx.theme();
-    let colors = &theme.colors;
-    let rad_sm = theme.radius(Radius::Sm);
-    let text_sm = theme.text_size(TextSize::Sm);
-    div()
+    let colors = &cx.theme().colors;
+    row_frame(cx)
         .id("saved-save-row")
         .role(Role::MenuItem)
         .aria_label("Save current tabs")
-        .flex()
-        .items_center()
-        .gap_2()
-        .w_full()
-        .px_2()
-        .py_1()
-        .rounded(rad_sm)
-        .text_size(text_sm)
         .text_color(if save_enabled {
             colors.fg
         } else {
@@ -815,32 +744,16 @@ fn saved_set_row(set: &SavedSetInfo, controller: &Entity<Controller>, cx: &App) 
                 .px_1()
                 .occlude()
                 .child(
-                    div()
-                        .id(("saved-rename", id))
-                        .p_1()
-                        .rounded(rad_sm)
-                        .cursor_pointer()
-                        .hover(|style| style.bg(colors.hover))
-                        .on_click(rename)
-                        .child(
-                            Icon::new(IconName::Pencil)
-                                .size(IconSize::Sm)
-                                .color(colors.fg_muted),
-                        ),
+                    IconButton::new(("saved-rename", id), IconName::Pencil)
+                        .size(ControlSize::Sm)
+                        .tooltip("Rename set")
+                        .on_click(rename),
                 )
                 .child(
-                    div()
-                        .id(("saved-delete", id))
-                        .p_1()
-                        .rounded(rad_sm)
-                        .cursor_pointer()
-                        .hover(|style| style.bg(colors.hover))
-                        .on_click(delete)
-                        .child(
-                            Icon::new(IconName::Trash2)
-                                .size(IconSize::Sm)
-                                .color(colors.danger),
-                        ),
+                    IconButton::new(("saved-delete", id), IconName::Trash2)
+                        .size(ControlSize::Sm)
+                        .tooltip("Delete set")
+                        .on_click(delete),
                 ),
         )
         .into_any_element()
@@ -850,7 +763,7 @@ fn menu_divider(id: &'static str, cx: &App) -> AnyElement {
     div()
         .id(id)
         .my_1()
-        .h(px(1.0))
+        .h(px(DIVIDER_H))
         .w_full()
         .bg(cx.theme().colors.border)
         .into_any_element()
