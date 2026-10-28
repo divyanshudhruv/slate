@@ -92,9 +92,18 @@ pub fn parse_version(text: &str) -> Option<Version> {
     let cut = text.find(['-', '+']).unwrap_or(text.len());
     let (core, suffix) = text.split_at(cut);
     let mut parts = core.split('.');
-    let major = leading_number(parts.next()?)?;
-    let minor = parts.next().and_then(leading_number).unwrap_or(0);
-    let patch = parts.next().and_then(leading_number).unwrap_or(0);
+    let major = version_number(parts.next()?)?;
+    let minor = match parts.next() {
+        Some(part) => version_number(part)?,
+        None => 0,
+    };
+    let patch = match parts.next() {
+        Some(part) => version_number(part)?,
+        None => 0,
+    };
+    if parts.next().is_some_and(|extra| !extra.is_empty()) {
+        return None;
+    }
     let prerelease = suffix
         .strip_prefix('-')
         .unwrap_or("")
@@ -230,13 +239,12 @@ pub fn assets_ready(release: &Release, arch: &str) -> bool {
         && release.assets.iter().any(|name| name == "SHA256SUMS")
 }
 
-fn leading_number(text: &str) -> Option<u32> {
-    let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if digits.is_empty() {
-        None
-    } else {
-        digits.parse().ok()
+/// A whole version component: a stray suffix or an overflowing number means the tag is not real.
+fn version_number(text: &str) -> Option<u32> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
     }
+    text.parse().ok()
 }
 
 #[cfg(test)]
@@ -254,6 +262,14 @@ mod tests {
         assert_eq!(parse_version("1").map(|v| v.minor), Some(0));
         assert!(parse_version("nonsense").is_none());
         assert!(parse_version("").is_none());
+    }
+
+    #[test]
+    fn rejects_malformed_and_overflowing_components() {
+        assert!(parse_version("v1.2.x").is_none());
+        assert!(parse_version("1.2.3.4").is_none());
+        assert!(parse_version("v1.99999999999.0").is_none());
+        assert!(parse_version("1..3").is_none());
     }
 
     #[test]

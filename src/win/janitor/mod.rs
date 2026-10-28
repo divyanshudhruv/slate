@@ -85,9 +85,14 @@ fn key_path() -> PathBuf {
 }
 
 /// DPAPI-protected so another account cannot forge it; older raw 32-byte files get rewritten.
+/// A key that exists but cannot be read is kept: replacing it would orphan every payload.
 fn load_or_create_key() -> Option<[u8; 32]> {
     let path = key_path();
-    if let Ok(bytes) = std::fs::read(&path) {
+    if path.exists() {
+        let Ok(bytes) = std::fs::read(&path) else {
+            tracing::error!("could not read the janitor key; crash recovery is off");
+            return None;
+        };
         if let Ok(key) = <[u8; 32]>::try_from(bytes.as_slice()) {
             save_key(&path, &key);
             return Some(key);
@@ -97,7 +102,8 @@ fn load_or_create_key() -> Option<[u8; 32]> {
                 return Some(key);
             }
         }
-        tracing::warn!("ignoring an unreadable janitor key");
+        tracing::error!("the janitor key is unreadable; leaving it and skipping recovery");
+        return None;
     }
     let mut key = [0u8; 32];
     let generated = unsafe {

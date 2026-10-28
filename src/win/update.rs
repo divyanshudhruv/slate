@@ -39,13 +39,19 @@ fn mark_pending(version: &str) {
     }
 }
 
+/// Clears the marker and drops the pre-update copy; only for a build that proved itself.
 pub fn clear_update_marker() {
+    clear_marker_only();
+    // The new build reached its first frame, so the previous copy is no longer needed.
+    let canonical = config::canonical_exe_path();
+    let _ = fs::remove_file(install::backup_path(&canonical));
+}
+
+/// Clears the marker but keeps the backup, so a failed rollback can still be retried.
+fn clear_marker_only() {
     let path = marker_path();
     if path.exists() {
         let _ = fs::remove_file(path);
-        // The new build reached its first frame, so the pre-update copy is no longer needed.
-        let canonical = config::canonical_exe_path();
-        let _ = fs::remove_file(install::backup_path(&canonical));
     }
 }
 
@@ -85,20 +91,20 @@ pub fn recover_interrupted_update() -> Option<i32> {
             let backup = install::backup_path(&canonical);
             if !backup.exists() {
                 error!("no backup to roll back to; keeping the current build");
-                clear_update_marker();
+                clear_marker_only();
                 return None;
             }
             let failed = canonical.with_file_name(install::FAILED_NAME);
             let _ = fs::remove_file(&failed);
             if let Err(err) = fs::rename(&canonical, &failed) {
                 error!("could not set the failed build aside: {err}");
-                clear_update_marker();
+                clear_marker_only();
                 return None;
             }
             if let Err(err) = fs::rename(&backup, &canonical) {
                 error!("could not put the backup back: {err}");
                 let _ = fs::rename(&failed, &canonical);
-                clear_update_marker();
+                clear_marker_only();
                 return None;
             }
             clear_update_marker();
