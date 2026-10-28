@@ -105,6 +105,19 @@ const VK_OEM_4: u16 = 0xDB;
 const VK_OEM_5: u16 = 0xDC;
 const VK_OEM_6: u16 = 0xDD;
 const VK_OEM_7: u16 = 0xDE;
+const VK_NUMPAD0: u16 = 0x60;
+const VK_MULTIPLY: u16 = 0x6A;
+const VK_ADD: u16 = 0x6B;
+const VK_SUBTRACT: u16 = 0x6D;
+const VK_DECIMAL: u16 = 0x6E;
+const VK_DIVIDE: u16 = 0x6F;
+const VK_VOLUME_MUTE: u16 = 0xAD;
+const VK_VOLUME_DOWN: u16 = 0xAE;
+const VK_VOLUME_UP: u16 = 0xAF;
+const VK_MEDIA_NEXT_TRACK: u16 = 0xB0;
+const VK_MEDIA_PREV_TRACK: u16 = 0xB1;
+const VK_MEDIA_STOP: u16 = 0xB2;
+const VK_MEDIA_PLAY_PAUSE: u16 = 0xB3;
 
 /// The virtual-key code a key name means, or none when Slate cannot bind it.
 pub fn vk_for(name: &str) -> Option<u16> {
@@ -143,7 +156,26 @@ pub fn vk_for(name: &str) -> Option<u16> {
         "|" | "\\" => return Some(VK_OEM_5),
         "}" | "]" => return Some(VK_OEM_6),
         "\"" | "'" => return Some(VK_OEM_7),
+        "num*" => return Some(VK_MULTIPLY),
+        "num+" => return Some(VK_ADD),
+        "num-" => return Some(VK_SUBTRACT),
+        "num." => return Some(VK_DECIMAL),
+        "num/" => return Some(VK_DIVIDE),
+        "mute" | "volume_mute" => return Some(VK_VOLUME_MUTE),
+        "volume_down" => return Some(VK_VOLUME_DOWN),
+        "volume_up" => return Some(VK_VOLUME_UP),
+        "media_next" => return Some(VK_MEDIA_NEXT_TRACK),
+        "media_prev" => return Some(VK_MEDIA_PREV_TRACK),
+        "media_stop" => return Some(VK_MEDIA_STOP),
+        "media_play" => return Some(VK_MEDIA_PLAY_PAUSE),
         _ => {}
+    }
+    if let Some(digit) = lower.strip_prefix("num") {
+        if digit.len() == 1 {
+            if let Some(value) = digit.chars().next().and_then(|c| c.to_digit(10)) {
+                return Some(VK_NUMPAD0 + value as u16);
+            }
+        }
     }
     if name.len() == 1 {
         let bytes = name.as_bytes();
@@ -183,7 +215,22 @@ pub fn name_for(vk: u16) -> Option<String> {
         VK_UP => return Some("up".to_string()),
         VK_RIGHT => return Some("right".to_string()),
         VK_DOWN => return Some("down".to_string()),
+        VK_MULTIPLY => return Some("num*".to_string()),
+        VK_ADD => return Some("num+".to_string()),
+        VK_SUBTRACT => return Some("num-".to_string()),
+        VK_DECIMAL => return Some("num.".to_string()),
+        VK_DIVIDE => return Some("num/".to_string()),
+        VK_VOLUME_MUTE => return Some("mute".to_string()),
+        VK_VOLUME_DOWN => return Some("volume_down".to_string()),
+        VK_VOLUME_UP => return Some("volume_up".to_string()),
+        VK_MEDIA_NEXT_TRACK => return Some("media_next".to_string()),
+        VK_MEDIA_PREV_TRACK => return Some("media_prev".to_string()),
+        VK_MEDIA_STOP => return Some("media_stop".to_string()),
+        VK_MEDIA_PLAY_PAUSE => return Some("media_play".to_string()),
         _ => {}
+    }
+    if (VK_NUMPAD0..VK_NUMPAD0 + 10).contains(&vk) {
+        return Some(format!("num{}", vk - VK_NUMPAD0));
     }
     if (VK_DIGIT0..VK_DIGIT0 + 10).contains(&vk) {
         return Some(char::from_digit((vk - VK_DIGIT0) as u32, 10)?.to_string());
@@ -197,9 +244,18 @@ pub fn name_for(vk: u16) -> Option<String> {
     NAME_HOOK.get().and_then(|hook| hook(vk))
 }
 
-/// True when the chord carries at least one unshifted modifier, so a bare key never qualifies.
+/// Keys that may be bound without ctrl, alt, or win: the numpad and the media row.
+fn bare_allowed(vk: u16) -> bool {
+    (VK_NUMPAD0..=VK_DIVIDE).contains(&vk)
+        || (VK_VOLUME_MUTE..=VK_VOLUME_UP).contains(&vk)
+        || (VK_MEDIA_NEXT_TRACK..=VK_MEDIA_PLAY_PAUSE).contains(&vk)
+}
+
+/// True when the chord carries a modifier, or a key that stands on its own.
 pub fn chord_valid(chord: Chord) -> bool {
-    (chord.ctrl || chord.alt || chord.win) && chord.vk != 0 && chord.vk != VK_ESCAPE
+    (chord.ctrl || chord.alt || chord.win || bare_allowed(chord.vk))
+        && chord.vk != 0
+        && chord.vk != VK_ESCAPE
 }
 
 /// Resolves a key name the current layout knows but the US table does not.
@@ -339,6 +395,16 @@ mod tests {
         assert!(parse("ctrl+w+w").is_err());
         assert!(parse("ctrl+ctrl+w").is_err());
         assert!(parse("ctrl+++").is_err());
+    }
+
+    #[test]
+    fn numpad_and_media_keys_bind_without_modifiers() {
+        assert_eq!(parse("num5").unwrap().vk, VK_NUMPAD0 + 5);
+        assert!(parse("num+").is_ok());
+        assert!(parse("media_play").is_ok());
+        assert!(parse("volume_up").is_ok());
+        assert_eq!(name_for(VK_MEDIA_NEXT_TRACK).as_deref(), Some("media_next"));
+        assert!(parse("w").is_err());
     }
 
     #[test]
