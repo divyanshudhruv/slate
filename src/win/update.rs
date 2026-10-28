@@ -6,7 +6,7 @@ use std::process::Command;
 
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::config;
@@ -158,6 +158,9 @@ pub fn bootstrap(source: &str) -> Result<(), String> {
         restore_backup(&backup, &canonical);
         return Err("failed to write install record".to_string());
     }
+    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
+        warn!("start menu shortcut: {err}");
+    }
     info!("bootstrap complete version {version}");
     Ok(())
 }
@@ -190,6 +193,9 @@ pub fn relocate(source: &str) -> Result<(), String> {
         pid: 0,
     }) {
         return Err("failed to write install record".to_string());
+    }
+    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
+        warn!("start menu shortcut: {err}");
     }
     Command::new(&canonical)
         .creation_flags(CREATE_NO_WINDOW.0)
@@ -298,6 +304,14 @@ pub fn asset_arch() -> &'static str {
 }
 
 pub fn download_release(version: &str) -> Result<PathBuf, String> {
+    download_release_with_progress(version, |_| {})
+}
+
+/// Same as `download_release`, but reports how much of the asset has arrived, 0 to 100.
+pub fn download_release_with_progress(
+    version: &str,
+    mut progress: impl FnMut(u8),
+) -> Result<PathBuf, String> {
     info!("downloading release v{version}");
     let arch = asset_arch();
     let asset = update::asset_name(version, arch);
@@ -327,11 +341,38 @@ pub fn download_release(version: &str) -> Result<PathBuf, String> {
         let _ = fs::remove_file(&dest);
         return Err(format!("Network error {}", res.status().as_u16()));
     }
+    let total = res.content_length().unwrap_or(0);
     let mut file = fs::File::create(&dest).map_err(|err| format!("create file: {err}"))?;
-    if let Err(err) = res.copy_to(&mut file) {
-        let _ = fs::remove_file(&dest);
-        return Err(format!("download: {err}"));
+    let mut buf = [0u8; 64 * 1024];
+    let mut received: u64 = 0;
+    let mut reported: u8 = u8::MAX;
+    loop {
+        let read = match res.read(&mut buf) {
+            Ok(read) => read,
+            Err(err) => {
+                let _ = fs::remove_file(&dest);
+                return Err(format!("download: {err}"));
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        if let Err(err) = file.write_all(&buf[..read]) {
+            let _ = fs::remove_file(&dest);
+            return Err(format!("write file: {err}"));
+        }
+        received += read as u64;
+        if let Some(percent) = (received.saturating_mul(100))
+            .checked_div(total)
+            .map(|value| value.min(100) as u8)
+        {
+            if percent != reported {
+                reported = percent;
+                progress(percent);
+            }
+        }
     }
+    progress(100);
     let _ = file.flush();
     let sums = match fetch_sums(version) {
         Ok(sums) => sums,

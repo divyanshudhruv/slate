@@ -1,10 +1,16 @@
 name: CI
 
+# One run per change, not four:
+#   - a push to development is checked once,
+#   - a pull request into main is checked once (as the merge result),
+#   - merging does not re-run anything: the tree was already checked by the PR,
+#   - releases are compiled by release.yml, never here.
 on:
   push:
-    branches: [main, development]
+    branches: [development]
   pull_request:
-    branches: [main, development]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,6 +28,9 @@ concurrency:
 jobs:
   build:
     runs-on: windows-latest
+    # A release-please PR only bumps the version and the changelog. release.yml
+    # compiles and uploads the tag, so checking it here buys nothing.
+    if: github.event_name != 'pull_request' || !startsWith(github.head_ref, 'release-please--')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -34,16 +43,15 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development' }}
+          save-if: ${{ github.ref == 'refs/heads/development' }}
 
       - name: Format
         run: cargo fmt --all -- --check
 
+      # Clippy checks every target and Test links the binary, so a separate
+      # `cargo build` step would only repeat work already done here.
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
-
-      - name: Build
-        run: cargo build --locked --verbose
 
       - name: Test
         run: cargo test --locked --verbose

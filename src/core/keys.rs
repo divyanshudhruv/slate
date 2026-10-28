@@ -266,8 +266,7 @@ fn vk_and_shift_for(name: &str) -> Option<(u16, bool)> {
     VK_HOOK.get().and_then(|hook| hook(name))
 }
 
-/// Parses a settings string like "ctrl+shift+tab". Modifiers are read from the
-/// left, so the key part may itself contain '+'.
+/// Parses "ctrl+shift+tab". Modifiers are read from the left, so the key may contain '+'.
 pub fn parse(text: &str) -> Result<Chord, String> {
     let text = text.trim();
     if text.is_empty() {

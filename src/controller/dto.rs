@@ -1,8 +1,6 @@
-use ely_gpui_component::feedback::Toast;
 use ely_gpui_component::primitives::Severity;
 use gpui::{RenderImage, SharedString};
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::core::keys::KeyAction;
 use crate::core::{GroupId, TabId, UpdateState};
@@ -134,7 +132,9 @@ pub enum Cmd {
     ReloadSettings,
     OpenKeybinds,
     CloseDialog,
-    InstallAvailableUpdate,
+    BannerAction(BannerAction),
+    DismissBanner,
+    DismissUpdateBanner,
     SetKeybindChord {
         action: KeyAction,
         chord: Option<crate::core::keys::Chord>,
@@ -154,6 +154,31 @@ pub struct TabInfo {
     pub exe_path: String,
     pub icon: Option<Arc<RenderImage>>,
     pub accent: Option<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BannerAction {
+    InstallUpdate,
+    RetryUpdateCheck,
+    RestartUpdate,
+}
+
+/// What a banner says, and which surface renders it.
+#[derive(Clone, Debug)]
+pub enum BannerKind {
+    Message {
+        severity: Severity,
+        text: SharedString,
+        action: Option<(SharedString, BannerAction)>,
+    },
+    /// The window picker is armed; cleared when it ends.
+    Pick,
+}
+
+#[derive(Clone, Debug)]
+pub struct BannerView {
+    pub id: u64,
+    pub kind: BannerKind,
 }
 
 #[derive(Clone)]
@@ -182,6 +207,10 @@ pub struct HostInfo {
     pub hover_preview: Option<HoverPreview>,
     pub show_tab_bar: bool,
     pub update: UpdateState,
+    /// Set when the user dismissed the update banner for this version.
+    pub update_banner_hidden: Option<String>,
+    pub banner: Option<BannerView>,
+    pub keybind_error: Option<SharedString>,
     pub dialog: Option<Dialog>,
     pub keybinds: crate::config::Keybinds,
     pub caption: SharedString,
@@ -216,7 +245,6 @@ pub struct SavedSetInfo {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dialog {
     Keybinds,
-    Update,
     Recovery,
 }
 
@@ -233,31 +261,16 @@ pub struct HoverPreview {
     pub image: Option<Arc<RenderImage>>,
 }
 
-/// Long enough to read, short enough to stay out of the way.
-const TOAST_STAY_INFO_MS: u64 = 4_000;
-/// Errors linger so a message is not missed.
-const TOAST_STAY_ERROR_MS: u64 = 7_000;
-
-pub(super) fn pick_toast() -> Toast {
-    Toast::new("Add a window")
-        .severity(Severity::Info)
-        .body("Hover a window - press TAB to add - Esc to cancel")
-        .stay(Some(Duration::from_millis(TOAST_STAY_INFO_MS)))
-}
-
-pub(super) fn update_toast(
-    title: &'static str,
+pub(super) fn banner_message(
     severity: Severity,
-    body: impl Into<SharedString>,
-) -> Toast {
-    let stay = match severity {
-        Severity::Danger => TOAST_STAY_ERROR_MS,
-        _ => TOAST_STAY_INFO_MS,
-    };
-    Toast::new(title)
-        .severity(severity)
-        .body(body)
-        .stay(Some(Duration::from_millis(stay)))
+    text: impl Into<SharedString>,
+    action: Option<(SharedString, BannerAction)>,
+) -> BannerKind {
+    BannerKind::Message {
+        severity,
+        text: text.into(),
+        action,
+    }
 }
 
 pub(super) fn app_name(exe_name: &str) -> String {

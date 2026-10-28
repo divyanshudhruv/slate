@@ -84,8 +84,7 @@ fn key_path() -> PathBuf {
     crate::config::paths::data_dir().join("janitor.key")
 }
 
-/// The key is stored DPAPI-protected, so another account cannot forge a payload. A raw 32-byte
-/// file from an older build is read once and rewritten protected.
+/// DPAPI-protected so another account cannot forge it; older raw 32-byte files get rewritten.
 fn load_or_create_key() -> Option<[u8; 32]> {
     let path = key_path();
     if let Ok(bytes) = std::fs::read(&path) {

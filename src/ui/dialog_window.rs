@@ -1,3 +1,4 @@
+﻿use ely_gpui_component::feedback::InlineMessage;
 use gpui::prelude::*;
 use gpui::{div, px, App, Entity, IntoElement, Keystroke, Modifiers, Window};
 
@@ -10,7 +11,6 @@ use ely_gpui_component::theme::{ActiveTheme, IconSize, TextSize};
 
 use crate::controller::{Cmd, Controller, Dialog as SlateDialog};
 use crate::core::keys::{self, Chord, KeyAction, ACTIONS};
-use crate::core::update::UpdateState;
 
 /// Dialog surfaces use Ely's Dialog component.
 pub(super) fn in_host_dialog(
@@ -20,7 +20,6 @@ pub(super) fn in_host_dialog(
     let kind = controller.read(cx).dialog()?;
     match kind {
         SlateDialog::Keybinds => Some(keybinds_dialog(controller, cx)),
-        SlateDialog::Update => Some(update_dialog(controller, cx)),
         SlateDialog::Recovery => Some(recovery_dialog(controller, cx)),
     }
 }
@@ -126,6 +125,7 @@ fn chord_of(stroke: &Keystroke) -> Option<Chord> {
 fn keybinds_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElement {
     let draft = controller.read(cx).keybind_draft().to_vec();
     let theme = cx.theme();
+    let keybind_error = controller.read(cx).host_info().keybind_error.clone();
 
     let ctrl_close = controller.clone();
     let mut dialog = Dialog::new(
@@ -157,37 +157,43 @@ fn keybinds_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElemen
             KeyAction::SelectTab => "Go to tab by number",
         };
         rows.push(
-            div()
-                .w_full()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .py_1()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_0p5()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .text_size(theme.text_size(TextSize::Md))
-                                .text_color(theme.colors.fg)
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .text_size(theme.text_size(TextSize::Xs))
-                                .text_color(theme.colors.fg_muted)
-                                .child(desc),
-                        ),
-                )
-                .child(HotkeyInput::new(("hotkey", index), value).on_change(on_change)),
+            div().w_full().flex().flex_col().gap_1().py_1().child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(theme.text_size(TextSize::Md))
+                                    .text_color(theme.colors.fg)
+                                    .child(label),
+                            )
+                            .child(
+                                div()
+                                    .text_size(theme.text_size(TextSize::Xs))
+                                    .text_color(theme.colors.fg_muted)
+                                    .child(desc),
+                            ),
+                    )
+                    .child(HotkeyInput::new(("hotkey", index), value).on_change(on_change)),
+            ),
         );
     }
 
     dialog = dialog.child(div().flex().flex_col().gap_1().children(rows));
+    if let Some(err) = keybind_error {
+        dialog = dialog.child(
+            InlineMessage::new(ely_gpui_component::primitives::Severity::Danger, err)
+                .into_any_element(),
+        );
+    }
 
     let ctrl_reset = controller.clone();
     dialog = dialog.action(move |_close| {
@@ -212,96 +218,16 @@ fn keybinds_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElemen
         Button::new("kb-save", "Save")
             .primary()
             .on_click(move |_ev, window, cx| {
-                ctrl.update(cx, |c, cx| c.dispatch(Cmd::CommitKeybinds, cx));
-                close(window, cx);
+                // An invalid chord keeps the dialog open so the inline message stays in view.
+                let saved = ctrl.update(cx, |c, cx| {
+                    c.dispatch(Cmd::CommitKeybinds, cx);
+                    c.dialog().is_none()
+                });
+                if saved {
+                    close(window, cx);
+                }
             })
     });
 
     dialog.into_any_element()
-}
-
-fn update_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElement {
-    let info = controller.read(cx).host_info();
-    let theme = cx.theme();
-    let (available, version) = match &info.update {
-        UpdateState::Available(version) => (true, version.clone()),
-        _ => (false, String::new()),
-    };
-
-    let update = {
-        let ctrl = controller.clone();
-        move |_ev: &gpui::ClickEvent, _w: &mut Window, cx: &mut App| {
-            ctrl.update(cx, |c, cx| {
-                c.dispatch(Cmd::InstallAvailableUpdate, cx);
-                c.dispatch(Cmd::CloseDialog, cx);
-            });
-        }
-    };
-    let later = {
-        let ctrl = controller.clone();
-        move |_ev: &gpui::ClickEvent, _w: &mut Window, cx: &mut App| {
-            ctrl.update(cx, |c, cx| c.dispatch(Cmd::CloseDialog, cx));
-        }
-    };
-
-    let (title, note) = if available {
-        (
-            format!("Slate update v{version}"),
-            "A new version is ready. Download and verify it; Slate will restart to install.",
-        )
-    } else {
-        (
-            "Checking for updates".to_string(),
-            "The update notice will appear when the check finishes.",
-        )
-    };
-
-    div()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .p(px(DIALOG_PAD))
-        .when(available, |card| {
-            card.child(
-                Icon::new(IconName::Download)
-                    .size(IconSize::Lg)
-                    .color(theme.colors.accent)
-                    .into_any_element(),
-            )
-        })
-        .child(
-            div()
-                .text_size(theme.text_size(TextSize::Xl))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(theme.colors.fg)
-                .child(title),
-        )
-        .child(
-            div()
-                .text_size(theme.text_size(TextSize::Sm))
-                .text_color(theme.colors.fg_muted)
-                .child(note),
-        )
-        .when(available, |card| {
-            card.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .mt_2()
-                    .child(
-                        Button::new("upd-later", "Later")
-                            .variant(ely_gpui_component::buttons::ButtonVariant::Ghost)
-                            .on_click(later),
-                    )
-                    .child(
-                        Button::new("upd-now", "Update now")
-                            .primary()
-                            .on_click(update),
-                    ),
-            )
-        })
-        .into_any_element()
 }

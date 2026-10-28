@@ -267,8 +267,7 @@ impl Keybinds {
         }
     }
 
-    /// Parsed chords, one per action, falling back to the default
-    /// when a value does not parse or collides with an earlier one.
+    /// Parsed chords per action, falling back to the default on parse errors or collisions.
     pub fn bindings(&self) -> Vec<(KeyAction, crate::core::keys::Chord)> {
         let mut used: Vec<crate::core::keys::Chord> = Vec::new();
         let mut out = Vec::with_capacity(ACTIONS.len());

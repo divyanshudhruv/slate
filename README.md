@@ -1,3 +1,4 @@
+<img alt="footer banner" src="./assets/readme/footer-banner.png" />
 <img alt="banner" src="./assets/readme/header-banner.png" />
 
 <p align="center">
@@ -6,7 +7,7 @@
 
 <div align="center">
 
-[![CI](https://img.shields.io/github/actions/workflow/status/divyanshudhruv/slate/ci.yml?label=ci&style=flat-square)](https://github.com/divyanshudhruv/slate/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/divyanshudhruv/slate/ci.yml?branch=development&label=ci&style=flat-square)](https://github.com/divyanshudhruv/slate/actions/workflows/ci.yml)
 [![Deny](https://img.shields.io/github/actions/workflow/status/divyanshudhruv/slate/deny.yml?label=deny&style=flat-square)](https://github.com/divyanshudhruv/slate/actions/workflows/deny.yml)
 [![Release](https://img.shields.io/github/v/release/divyanshudhruv/slate?sort=semver&style=flat-square)](https://github.com/divyanshudhruv/slate/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/divyanshudhruv/slate/total?style=flat-square)](https://github.com/divyanshudhruv/slate/releases)
@@ -30,35 +31,36 @@
 - [Build from source](#build-from-source)
 - [Usage](#usage)
 - [Files and data](#files-and-data)
+- [Migration](MIGRATION.md)
 - [Limitations](#limitations)
 - [Star History](#star-history)
 - [License](#license)
 
 ## Features
 
-**`1. Any window as a tab`** - add one from the `+` picker, Ctrl-drag a window onto the host, or hover it in pick mode and press `TAB`
+**`1. Any window as a tab`** - use the `+` picker, Ctrl-drag a window onto the host, or hover it and press `TAB`
 
-**`2. Drag out to detach`** - drag a tab off the strip to send its window back to the desktop at the drop point, across monitors
+**`2. Drag out to detach`** - drag a tab off the strip to drop its window back on the desktop, across monitors
 
-**`3. Per-tab accents`** - color-code tabs by hue from the tab menu; colors are saved with tab sets
+**`3. Per-tab accents`** - color-code tabs from the tab menu; colors are saved with sets
 
-**`4. Saved sets`** - snapshot the open tabs as a named set and restore it later. Save overwrites an existing set with the same name; restoring only re-hosts windows that are already running
+**`4. Saved sets`** - save the open tabs as a named set and restore it later (running windows only)
 
 **`5. Hover preview`** - rest on a tab for a live snapshot of its window
 
-**`6. Global shortcuts`** - `Ctrl`+`Tab`, `Ctrl`+`Shift`+`Tab`, `Ctrl`+`1..9` and `Ctrl`+`W` keep working while a hosted window has focus
+**`6. Global shortcuts`** - `Ctrl`+`Tab`, `Ctrl`+`Shift`+`Tab`, `Ctrl`+`1..9` and `Ctrl`+`W` work while a hosted window has focus
 
 **`7. Tray icon`** - restore the host or exit from the notification area
 
-**`8. Self-updating`** - **Check for updates** downloads and installs updates in-app with mandatory SHA256 checksum verification. Updates are swapped into the installed location with automatic rollback support.
+**`8. Self-updating`** - in-app updates with mandatory SHA256 verification and automatic rollback
 
-**`9. Light and dark themes`** - the theme button cycles system, dark, and light, and the choice is saved
+**`9. Light and dark themes`** - the theme button cycles system, dark, and light
 
-**`10. Search and multi-add`** - the `+` picker filters windows by name and adds several at once; arrow keys move the cursor, `Enter` adds the highlighted one, `Esc` closes
+**`10. Search and multi-add`** - the `+` picker filters by name and adds several at once; `Enter` adds, `Esc` closes
 
-**`11. Restore session on launch`** - reopen last time's tabs when Slate starts (toggle it in the Slate menu)
+**`11. Session restore`** - reopen last time's tabs on launch (toggle in the Slate menu)
 
-**`12. Sets match windows, not just titles`** - restoring a set looks for an exact title first, then falls back to process and placement, so a retitled or moved window still comes back
+**`12. Sets match windows, not titles`** - exact title first, then process and placement, so retitled windows still return
 
 ## Gallery
 
@@ -166,6 +168,8 @@ download, compare it against the published `SHA256SUMS`:
 Get-FileHash .\slate-vX.Y.Z-x64.exe -Algorithm SHA256  # match the file you downloaded
 ```
 
+Upgrading from an older build? See [MIGRATION.md](MIGRATION.md).
+
 ## Build from source
 
 You need Rust with the MSVC target and the Windows SDK. The exact toolchain
@@ -211,15 +215,13 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
 | `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap helper |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |
+| `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Slate.lnk` | Start menu shortcut to the installed copy |
 
-On first run, Slate copies settings, sets, session, and the install record out of
-`%USERPROFILE%\.burntfern\` (the newest copy wins when both layouts have a
-file), moves the installed `slate.exe` into
-`%LOCALAPPDATA%\Programs\Burntfern\Slate\`, and then deletes
-`%USERPROFILE%\.burntfern\slate` once nothing in it is still needed. The rest of
-`.burntfern` is left alone: other Burntfern apps keep data there. Portable mode:
-set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe to keep
-settings, sets, session, updates, and logs in `data\` beside it.
+Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe
+to keep settings, sets, session, updates, and logs in `data\` beside it.
+
+Coming from the old `%USERPROFILE%\.burntfern\` layout? It is migrated
+automatically on first run - see [MIGRATION.md](MIGRATION.md).
 
 ## Limitations
 
@@ -227,8 +229,8 @@ settings, sets, session, updates, and logs in `data\` beside it.
 control, and GDI icon extraction.
 
 **`2. Owned windows draw above the host`** - While a Slate menu or dialog is
-open, it covers the active member. Tooltips and toasts that overlap a hosted
-window have the same problem.
+open, it covers the active member. Tooltips and other overlays that reach
+outside the title bar have the same problem.
 
 **`3. Accent is config-file only`** - the accent hue lives in `settings.json`.
 Change it there, then pick **Reload settings** in the Slate menu; there is no
@@ -239,7 +241,7 @@ accent picker in the UI.
 <a href="https://www.star-history.com/?repos=divyanshudhruv%2Fslate&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&theme=light&legend=top-left" />
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=divyanshudhruv/slate&type=date&legend=top-left" />
  </picture>
 </a>
@@ -249,5 +251,3 @@ accent picker in the UI.
 Slate is licensed under the [GNU General Public License v3.0](LICENSE).
 
 `Copyright © 2026 Divyanshu Dhruv`
-
-<img alt="banner" src="./assets/readme/footer-banner.png" />

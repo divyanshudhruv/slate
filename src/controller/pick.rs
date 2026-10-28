@@ -1,6 +1,6 @@
 use gpui::Context;
 
-use super::dto::pick_toast;
+use super::dto::BannerKind;
 use super::Controller;
 use crate::win::{
     content_rect_screen, ctrl_held, enumerate_windows, is_blacklisted, slate_elevated, window_rect,
@@ -16,9 +16,7 @@ impl Controller {
         if self.highlight.is_none() {
             self.highlight = Highlight::new();
         }
-        self.toaster.update(cx, |toaster, cx| {
-            toaster.push(pick_toast(), cx);
-        });
+        self.show_banner(BannerKind::Pick, None, cx);
         self.pick_gen = self.pick_gen.wrapping_add(1);
         let generation = self.pick_gen;
         cx.spawn(async move |this, cx| loop {
@@ -149,5 +147,12 @@ impl Controller {
             highlight.hide();
         }
         self.pick_gen = self.pick_gen.wrapping_add(1);
+        if matches!(
+            self.banner.as_ref().map(|banner| &banner.kind),
+            Some(BannerKind::Pick)
+        ) {
+            self.banner = None;
+        }
+        self.invalidate_info();
     }
 }

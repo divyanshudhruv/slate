@@ -1,8 +1,4 @@
-//! One Slate per data folder.
-//!
-//! Portable and installed builds read the same settings unless `SLATE_PORTABLE` is set, so a
-//! second copy would fight the first over the same files. A named mutex derived from the data
-//! directory makes the claim atomic, and a pid file lets the losing copy focus the winner.
+//! One Slate per data folder: portable and installed builds share settings, so a named mutex and a pid file keep one copy in charge.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};

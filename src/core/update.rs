@@ -15,6 +15,10 @@ pub enum UpdateState {
     Checking,
     UpToDate,
     Available(String),
+    /// Version, then how much of the asset has arrived, 0 to 100.
+    Downloading(String, u8),
+    /// Verified and handed to the swap helper, so the window is about to restart.
+    Installing(String),
     Failed,
 }
 

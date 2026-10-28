@@ -1,5 +1,3 @@
-use ely_gpui_component::feedback::Toast;
-use ely_gpui_component::primitives::Severity;
 use gpui::Context;
 
 use super::dto::Dialog;
@@ -80,6 +78,7 @@ impl Controller {
         self.hover_preview = None;
         self.hide_hover_preview();
         self.keybind_draft = draft_from_settings(&self.settings);
+        self.keybind_error = None;
         self.dialog = Some(Dialog::Keybinds);
     }
 
@@ -115,18 +114,15 @@ impl Controller {
             })
             .map(|(_, other)| *other);
         if let Some(conflict) = conflict {
-            self.push_toast(
-                Toast::new("Shortcut already in use")
-                    .severity(Severity::Danger)
-                    .body(format!(
-                        "This shortcut is already assigned to {}.",
-                        conflict.label()
-                    )),
-                cx,
-            );
+            self.keybind_error = Some(format!(
+                "This shortcut is already assigned to {}.",
+                conflict.label()
+            ));
+            cx.notify();
             return;
         }
         self.keybind_draft[index] = Some(chord);
+        self.keybind_error = None;
         cx.notify();
     }
 
@@ -135,6 +131,7 @@ impl Controller {
             .iter()
             .map(|action| Some(action.default()))
             .collect();
+        self.keybind_error = None;
         cx.notify();
     }
 
@@ -144,12 +141,11 @@ impl Controller {
             match self.keybind_draft.get(index).copied().flatten() {
                 Some(chord) => chords.push((*action, chord)),
                 None => {
-                    self.push_toast(
-                        Toast::new(format!("{} needs a chord", action.label()))
-                            .severity(Severity::Danger)
-                            .body("Clear the input or reset to get a default back."),
-                        cx,
-                    );
+                    self.keybind_error = Some(format!(
+                        "{} needs a chord. Clear the input or reset to get a default back.",
+                        action.label()
+                    ));
+                    cx.notify();
                     return;
                 }
             }
@@ -160,6 +156,7 @@ impl Controller {
         self.save_settings();
         push_shortcuts(&self.settings);
         self.close_dialog();
-        self.push_toast(Toast::new("Keybinds saved").severity(Severity::Info), cx);
+        self.keybind_error = None;
+        self.note_success("Keybinds saved", cx);
     }
 }

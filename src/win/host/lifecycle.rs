@@ -124,8 +124,7 @@ fn frame_flags(mh: HWND) -> SET_WINDOW_POS_FLAGS {
     }
 }
 
-/// Gives a member back to the desktop. Returns false when the window outlived the writes, so a
-/// crash-recovery replay can tell a partial restore from a clean one.
+/// Returns a member to the desktop. False when the window died first, so a replay sees a partial restore.
 pub fn unregister_member(member: isize, st: &StylingState) -> bool {
     if member == 0 {
         return false;
@@ -179,9 +178,7 @@ pub fn unregister_member(member: isize, st: &StylingState) -> bool {
     }
 }
 
-/// Asks the shell to rebuild this window's taskbar button. Ownership and style writes on a hosted
-/// window leave the shell's cache stale, so windows restored behind the focused one never get a
-/// button until they are clicked. `ITaskbarList` is the supported way to force that rebuild.
+/// Asks the shell to rebuild the taskbar button that ownership and style writes left stale.
 fn refresh_taskbar_button(mh: HWND) {
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,

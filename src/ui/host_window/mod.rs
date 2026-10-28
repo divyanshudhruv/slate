@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
-use ely_gpui_component::feedback::ToastViewport;
+use ely_gpui_component::feedback::Banner;
 use ely_gpui_component::forms::TextInput;
+use ely_gpui_component::primitives::Severity;
 use ely_gpui_component::theme::ActiveTheme;
 use ely_gpui_component::typography::{Caption, Kbd};
 use gpui::prelude::*;
 use gpui::{
-    div, App, Context, Entity, IntoElement, MouseButton, ParentElement, Render, RenderImage,
-    ScrollHandle, Size, Styled, Subscription, Window,
+    div, App, Context, ElementId, Entity, IntoElement, MouseButton, ParentElement, Render,
+    RenderImage, ScrollHandle, Size, Styled, Subscription, Window,
 };
 
-use crate::controller::{Cmd, Controller, SavedPrompt, TabInfo};
-use crate::core::{GroupId, TabId};
+use crate::controller::{BannerAction, BannerKind, Cmd, Controller, SavedPrompt, TabInfo};
+use crate::core::{GroupId, TabId, UpdateState};
 use crate::ui::tab_bar::{SlateTab, SlateTabBar, TabDrag, TabIcon};
 use crate::ui::window_hwnd;
 
@@ -38,7 +39,6 @@ pub struct HostWindow {
     saved_field: Option<Entity<TextInput>>,
     saved_primed: Option<SavedPrompt>,
     tab_scroll: ScrollHandle,
-    _observe: Subscription,
     _observe_controller: Subscription,
 }
 
@@ -54,8 +54,6 @@ pub(super) struct HostCtx<'a> {
 
 impl HostWindow {
     pub fn new(controller: Entity<Controller>, cx: &mut Context<Self>) -> Self {
-        let toaster = controller.read(cx).toaster();
-        let _observe = cx.observe(&toaster, |_this, _toaster, cx| cx.notify());
         let _observe_controller = cx.observe(&controller, |_this, _controller, cx| cx.notify());
         Self {
             controller,
@@ -67,10 +65,105 @@ impl HostWindow {
             saved_field: None,
             saved_primed: None,
             tab_scroll: ScrollHandle::new(),
-            _observe,
             _observe_controller,
         }
     }
+}
+
+/// Pins a banner under the title strip. Absolute, so showing one never reflows the body.
+fn render_banner(
+    info: &crate::controller::HostInfo,
+    controller: Entity<Controller>,
+    top: gpui::Rems,
+) -> gpui::AnyElement {
+    let strip = banner_strip(info, controller);
+    div()
+        .absolute()
+        .top(top)
+        .left_0()
+        .right_0()
+        .when_some(strip, |host, strip| host.child(strip))
+        .into_any_element()
+}
+
+/// Which banner wins: a message first, then what the updater has to say.
+fn banner_strip(
+    info: &crate::controller::HostInfo,
+    controller: Entity<Controller>,
+) -> Option<gpui::AnyElement> {
+    if let Some(view) = info.banner.as_ref() {
+        let banner = match &view.kind {
+            BannerKind::Message {
+                severity,
+                text,
+                action,
+            } => {
+                let banner = Banner::new(
+                    ElementId::named_usize("banner", view.id as usize),
+                    *severity,
+                    text.clone(),
+                );
+                let banner = match action.clone() {
+                    Some((label, action)) => {
+                        let ctrl = controller.clone();
+                        banner.action(label, move |_window, cx| {
+                            ctrl.update(cx, |c, cx| c.dispatch(Cmd::BannerAction(action), cx));
+                        })
+                    }
+                    None => banner,
+                };
+                let ctrl = controller.clone();
+                banner.on_dismiss(move |_window, cx| {
+                    ctrl.update(cx, |c, cx| c.dispatch(Cmd::DismissBanner, cx));
+                })
+            }
+            BannerKind::Pick => Banner::new(
+                ElementId::named_usize("pick-banner", 0),
+                Severity::Info,
+                "Hover a window, then press Tab to add it, or press Escape to cancel.",
+            ),
+        };
+        return Some(banner.into_any_element());
+    }
+    // The updater uses the same banner, wearing the severity that fits the state.
+    let (severity, text, action) = match &info.update {
+        UpdateState::Available(version) => {
+            if info.update_banner_hidden.as_deref() == Some(version.as_str()) {
+                return None;
+            }
+            (
+                Severity::Info,
+                format!("Slate v{version} is available."),
+                Some(("Download", BannerAction::InstallUpdate)),
+            )
+        }
+        UpdateState::Downloading(version, percent) => (
+            Severity::Info,
+            format!("Downloading Slate v{version}: {percent}%"),
+            None,
+        ),
+        UpdateState::Installing(version) => (
+            Severity::Warning,
+            format!("Slate v{version} is ready - restart to finish."),
+            Some(("Restart", BannerAction::RestartUpdate)),
+        ),
+        _ => return None,
+    };
+    let mut banner = Banner::new(ElementId::named_usize("update-banner", 0), severity, text);
+    if let Some((label, action)) = action {
+        let ctrl = controller.clone();
+        banner = banner.action(label, move |_window, cx| {
+            ctrl.update(cx, |c, cx| c.dispatch(Cmd::BannerAction(action), cx));
+        });
+    }
+    // Only an offer can be waved off; a download or a restart is already underway.
+    if matches!(info.update, UpdateState::Available(_)) {
+        let ctrl = controller.clone();
+        banner = banner.on_dismiss(move |_window, cx| {
+            ctrl.update(cx, |c, cx| c.dispatch(Cmd::DismissUpdateBanner, cx));
+        });
+    }
+    Some(banner.into_any_element())
 }
 
 impl Render for HostWindow {
@@ -423,7 +516,6 @@ impl Render for HostWindow {
             (false, false) => div().flex_1(),
         };
 
-        let toaster = self.controller.read(cx).toaster();
         let mut content = content.child(body);
         if let Some(preview) = info.hover_preview.as_ref() {
             let tab = info.tabs.iter().find(|t| t.id == preview.tab);
@@ -457,8 +549,9 @@ impl Render for HostWindow {
         if let Some(dialog) = self.saved_dialog(window, cx, info.as_ref()) {
             content = content.child(dialog);
         }
+        // Last child, so the strip paints over the body and any overlay.
         content
-            .child(ToastViewport::new("host-toasts", &toaster))
+            .child(render_banner(&info, controller.clone(), titlebar_h))
             .into_any_element()
     }
 }

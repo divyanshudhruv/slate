@@ -12,6 +12,7 @@ pub mod janitor;
 pub mod keys;
 pub mod pick;
 pub mod shell;
+pub mod shell_link;
 pub mod shortcut;
 pub mod stack;
 pub mod tray;

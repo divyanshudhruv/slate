@@ -1,3 +1,4 @@
+mod banner;
 mod dialog;
 mod dispatch;
 mod dto;
@@ -11,11 +12,11 @@ mod tabs;
 mod update;
 
 pub use dto::{
-    Cmd, Dialog, HostInfo, HoverPreview, PickerRow, SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
+    BannerAction, BannerKind, BannerView, Cmd, Dialog, HostInfo, HoverPreview, PickerRow,
+    SavedPrompt, SavedSetInfo, TabInfo, TabMenu,
 };
 
-use ely_gpui_component::feedback::Toaster;
-use gpui::{AppContext, Context, Entity, RenderImage, SharedString};
+use gpui::{Context, RenderImage, SharedString};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -38,7 +39,10 @@ pub struct Controller {
     styling: HashMap<isize, StylingState>,
     worker: HostWorker,
     janitor: Janitor,
-    toaster: Entity<Toaster>,
+    banner: Option<BannerView>,
+    banner_id: u64,
+    update_banner_hidden: Option<String>,
+    keybind_error: Option<String>,
     picking: bool,
     hovered: Option<isize>,
     pick_gen: u64,
@@ -72,6 +76,8 @@ pub struct Controller {
     drag: Option<isize>,
     drag_active: bool,
     update: UpdateState,
+    /// Verified build waiting for the Ready banner's restart.
+    pending_install: Option<(String, std::path::PathBuf)>,
     dialog: Option<Dialog>,
     keybind_draft: Vec<Option<crate::core::keys::Chord>>,
     info_cache: RefCell<Option<Arc<HostInfo>>>,
@@ -91,7 +97,6 @@ struct Index {
 impl Controller {
     pub fn new(cx: &mut Context<Self>) -> Self {
         config::ensure();
-        let toaster = cx.new(|_| Toaster::default());
         let settings = config::load();
         let update = UpdateState::from_cached(
             crate::core::update::CURRENT_VERSION,
@@ -141,17 +146,18 @@ impl Controller {
             tray: crate::win::TrayIcon::start(),
             drag: None,
             drag_active: false,
-            dialog: match &update {
-                UpdateState::Available(_) => Some(Dialog::Update),
-                _ => None,
-            },
+            dialog: None,
             update,
+            pending_install: None,
             keybind_draft: Vec::new(),
             info_cache: RefCell::new(None),
             index_cache: RefCell::new(None),
             save_error: RefCell::new(None),
             _pump: WinEventPump::install(),
-            toaster,
+            banner: None,
+            banner_id: 0,
+            update_banner_hidden: None,
+            keybind_error: None,
         };
         Self::start_event_pump(cx);
         controller.apply_theme(cx);
@@ -195,7 +201,21 @@ impl Controller {
                         );
                         return Some(1);
                     }
+                    crate::win::shell::info_message(
+                        "Slate moved",
+                        &format!(
+                            "Slate now runs from {}. A shortcut was added to the Start menu.",
+                            crate::config::paths::install_dir().display()
+                        ),
+                    );
                     return Some(0);
+                }
+                if !crate::win::shell_link::start_menu_shortcut_exists() {
+                    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(
+                        std::path::Path::new(&exe),
+                    ) {
+                        tracing::warn!("start menu shortcut: {err}");
+                    }
                 }
                 config::save_install(&config::InstallRecord {
                     path: exe,
@@ -319,6 +339,12 @@ impl Controller {
             UpdateState::Available(version) => {
                 SharedString::from(format!("Update available: v{version}"))
             }
+            UpdateState::Downloading(version, percent) => {
+                SharedString::from(format!("Downloading v{version}: {percent}%"))
+            }
+            UpdateState::Installing(version) => {
+                SharedString::from(format!("Restart to install v{version}"))
+            }
             UpdateState::UpToDate => SharedString::from("Slate is up to date"),
             UpdateState::Idle => SharedString::from("Check for updates"),
             UpdateState::Failed => SharedString::from("Update check failed - retry"),
@@ -382,6 +408,9 @@ impl Controller {
             hover_preview: self.hover_preview.clone(),
             show_tab_bar: self.settings.tabs.show_bar,
             update: self.update.clone(),
+            update_banner_hidden: self.update_banner_hidden.clone(),
+            banner: self.banner.clone(),
+            keybind_error: self.keybind_error.clone().map(SharedString::from),
             dialog: self.dialog,
             keybinds: self.settings.keybinds.clone(),
             caption,
@@ -389,10 +418,6 @@ impl Controller {
             update_label,
             beta_channel: self.settings.updates.channel == crate::core::update::Channel::Beta,
         }
-    }
-
-    pub fn toaster(&self) -> Entity<Toaster> {
-        self.toaster.clone()
     }
 
     fn shutdown(&mut self) {
@@ -529,12 +554,10 @@ impl Controller {
         out.push('\n');
         let chars = out.chars().count();
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(out));
-        let toast = dto::update_toast(
-            "Diagnostics copied",
-            ely_gpui_component::primitives::Severity::Success,
-            format!("{chars} characters on the clipboard"),
+        self.note_success(
+            format!("Diagnostics copied: {chars} characters on the clipboard"),
+            cx,
         );
-        self.push_toast(toast, cx);
     }
 
     /// Re-hosts the windows the janitor freed after a crash, in the order it reported them.

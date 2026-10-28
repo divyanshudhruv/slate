@@ -1,5 +1,3 @@
-use ely_gpui_component::feedback::Toast;
-use ely_gpui_component::primitives::Severity;
 use ely_gpui_component::theme::{ActiveTheme, Mode, Palette, Theme, HUE_NAMES};
 use gpui::{Context, Hsla};
 
@@ -40,16 +38,14 @@ impl Controller {
         let Some(err) = self.save_error.borrow_mut().take() else {
             return;
         };
-        let toast = super::dto::update_toast(
-            "Settings not saved",
-            Severity::Danger,
+        self.note_error(
             format!(
                 "{err}. Check that {} is writable.",
                 config::paths::data_dir().display()
             ),
+            None,
+            cx,
         );
-        self.toaster
-            .update(cx, |toaster, cx| toaster.push(toast, cx));
     }
 
     /// Re-reads config.json and settings.json so a hand edit lands without a restart.
@@ -64,9 +60,7 @@ impl Controller {
         }
         super::dialog::push_shortcuts(&self.settings);
         self.apply_theme(cx);
-        let toast = Toast::new("Settings reloaded").severity(Severity::Info);
-        self.toaster
-            .update(cx, |toaster, cx| toaster.push(toast, cx));
+        self.note_success("Settings reloaded", cx);
     }
 
     pub(super) fn apply_theme(&self, cx: &mut Context<Self>) {

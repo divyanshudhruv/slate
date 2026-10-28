@@ -1,6 +1,6 @@
 use gpui::Context;
 
-use super::dto::{Cmd, SavedPrompt, TabMenu};
+use super::dto::{BannerAction, Cmd, SavedPrompt, TabMenu};
 use super::Controller;
 use crate::config;
 use crate::win::{activate_window, enumerate_windows, install_window_icon};
@@ -132,11 +132,6 @@ impl Controller {
             }
             Cmd::CheckForUpdates { force } => self.check_for_updates(force, cx),
             Cmd::ToggleUpdateChannel => self.toggle_update_channel(cx),
-            Cmd::InstallAvailableUpdate => {
-                if let crate::core::UpdateState::Available(version) = self.update.clone() {
-                    self.install_update_from_dialog(version, cx);
-                }
-            }
             Cmd::OpenSlateFolder => {
                 crate::win::shell::open_folder(&config::paths::data_dir());
             }
@@ -154,6 +149,19 @@ impl Controller {
                 self.dismiss_recovered();
                 self.close_dialog();
             }
+            Cmd::BannerAction(action) => match action {
+                BannerAction::InstallUpdate => {
+                    if let crate::core::UpdateState::Available(version) = self.update.clone() {
+                        self.install_available_update(version, cx);
+                    }
+                }
+                BannerAction::RetryUpdateCheck => {
+                    self.check_for_updates(true, cx);
+                }
+                BannerAction::RestartUpdate => self.restart_for_update(cx),
+            },
+            Cmd::DismissBanner => self.dismiss_banner(cx),
+            Cmd::DismissUpdateBanner => self.dismiss_update_banner(cx),
         }
         self.sync_worker();
         cx.notify();

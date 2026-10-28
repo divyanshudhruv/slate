@@ -128,6 +128,8 @@ fn update_state(state: &UpdateState) -> (IconName, bool, bool) {
     match state {
         UpdateState::Checking => (IconName::RefreshCw, true, false),
         UpdateState::Available(_) => (IconName::Download, false, true),
+        UpdateState::Downloading(_, _) => (IconName::Download, true, false),
+        UpdateState::Installing(_) => (IconName::CircleCheck, true, true),
         UpdateState::UpToDate => (IconName::CircleCheck, true, false),
         UpdateState::Idle => (IconName::RefreshCw, false, false),
         UpdateState::Failed => (IconName::TriangleAlert, false, false),
@@ -176,14 +178,13 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
             MenuItem::new("Refresh window list")
                 .on_click(overlay_action(controller, || Cmd::Refresh)),
         )
-        .item(MenuItem::submenu("Keyboard shortcuts", shortcuts_menu).icon(IconName::Keyboard))
         .separator()
         .item(
-            MenuItem::check("Show window icons in tabs", info.icons_in_tabs)
+            MenuItem::check("Show window icons", info.icons_in_tabs)
                 .on_click(overlay_action(controller, || Cmd::ToggleIconsInTabs)),
         )
         .item(
-            MenuItem::check("Show tab count badge", info.show_tab_badge)
+            MenuItem::check("Show count badge", info.show_tab_badge)
                 .on_click(overlay_action(controller, || Cmd::ToggleTabBadge)),
         )
         .item(
@@ -194,10 +195,16 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
             MenuItem::check("Restore tabs on launch", info.restore_session)
                 .on_click(overlay_action(controller, || Cmd::ToggleRestoreSession)),
         )
-        .separator()
         .item(
             MenuItem::check("Hide tab bar", !info.show_tab_bar)
                 .on_click(overlay_action(controller, || Cmd::ToggleTabBar)),
+        )
+        .separator()
+        .item(MenuItem::submenu("Keyboard shortcuts", shortcuts_menu).icon(IconName::Keyboard))
+        .item(
+            MenuItem::new("Reload settings")
+                .icon(IconName::RefreshCw)
+                .on_click(overlay_action(controller, || Cmd::ReloadSettings)),
         )
         .separator()
         .item(
@@ -212,6 +219,7 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
             MenuItem::check("Beta update channel", info.beta_channel)
                 .on_click(overlay_action(controller, || Cmd::ToggleUpdateChannel)),
         )
+        .separator()
         .item(
             MenuItem::new("Open GitHub repository")
                 .icon(IconName::ExternalLink)
@@ -227,13 +235,8 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
                 .icon(IconName::Copy)
                 .on_click(overlay_action(controller, || Cmd::CopyDiagnostics)),
         )
-        .item(
-            MenuItem::new("Reload settings")
-                .icon(IconName::RefreshCw)
-                .on_click(overlay_action(controller, || Cmd::ReloadSettings)),
-        )
-        .separator()
         .item(MenuItem::new(info.version_label.clone()).disabled(true))
+        .separator()
         .item(MenuItem::new("Quit Slate").on_click(quit_action(controller)))
 }
 

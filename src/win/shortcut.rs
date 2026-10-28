@@ -74,8 +74,7 @@ fn pack(binding: &Binding) -> u32 {
         | action_code(binding.shortcut) << 22
 }
 
-/// Swaps the shortcut table the hook reads. Chords that cannot be bound are dropped,
-/// so the table always matches what the settings dialog validated.
+/// Swaps the table the hook reads; unbindable chords are dropped, so it matches the validated settings.
 pub fn set_bindings(entries: &[(Shortcut, Chord)]) {
     let table: Vec<Binding> = entries
         .iter()

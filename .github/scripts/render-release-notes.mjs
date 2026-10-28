@@ -38,8 +38,8 @@ if (!repo || !tag) {
 const sh = (cmd, ...args) =>
   execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 1 << 26 }).trim().replace(/\r/g, "");
 
-const commitLink = (sha) =>
-  `[\`${sha.slice(0, 7)}\`](https://github.com/${repo}/commit/${sha})`;
+const commitUrl = (sha) => `https://github.com/${repo}/commit/${sha}`;
+const commitLink = (sha) => `[\`${sha.slice(0, 7)}\`](${commitUrl(sha)})`;
 
 // ---- previous tag ---------------------------------------------------------
 
@@ -79,12 +79,30 @@ function fetchHandles(since) {
 
 // ---- entries and sections -------------------------------------------------
 
+/** GitHub login from a `123+name@users.noreply.github.com` address, if present. */
+function handleFromEmail(email) {
+  const m = /^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/.exec(email ?? "");
+  return m ? m[1] : "";
+}
+
 function entry(entry, number) {
-  const login = handles.get(entry.sha);
+  const login = handles.get(entry.sha) || handleFromEmail(entry.gitEmail);
   const who = login
-    ? `by [@${login}](https://github.com/${login})`
+    ? `by @${login}`
     : `by ${entry.gitAuthor}`;
   return `**\`${number}.\`** ${entry.title} (${commitLink(entry.sha)}) ${who}`;
+}
+
+/** `[#123](url)` when the commit came in through a PR, else the commit. */
+function contributionLink(sha) {
+  try {
+    const list = JSON.parse(sh("gh", "api", `repos/${repo}/commits/${sha}/pulls`));
+    const pr = Array.isArray(list) ? list.find((p) => p.number) : null;
+    if (pr) return `[#${pr.number}](${pr.html_url})`;
+  } catch {
+    // Direct pushes have no PR; fall through to the commit link.
+  }
+  return commitLink(sha);
 }
 
 // ---- body -----------------------------------------------------------------
@@ -98,13 +116,18 @@ const raw = sh(
   "git",
   "log",
   "--no-merges",
-  "--format=%H%x09%s%x09%an",
+  "--format=%H%x09%s%x09%an%x09%ae",
   prev ? `${prev}..${tag}` : tag,
 );
 
 const grouped = new Map(SECTIONS.map(([, title]) => [title, []]));
+const authors = new Map(); // identity -> oldest commit by that author in this release
 for (const line of raw.split("\n")) {
-  const [sha, subject, gitAuthor] = line.split("\t");
+  if (!line.trim()) continue;
+  const [sha, subject, gitAuthor, gitEmail] = line.split("\t");
+  const login = handles.get(sha) || handleFromEmail(gitEmail);
+  const key = (login || gitEmail).toLowerCase();
+  if (key) authors.set(key, { sha, gitAuthor, gitEmail, login });
   const m = SUBJECT.exec(subject);
   if (!m || HIDDEN.has(m[1].toLowerCase()) || m[3].startsWith("release")) continue;
   const section = SECTIONS.find(([t]) => t === m[1].toLowerCase())?.[1];
@@ -113,7 +136,7 @@ for (const line of raw.split("\n")) {
     continue;
   }
   // The commit's own title, scope and all, untouched.
-  grouped.get(section).push({ title: subject, sha, gitAuthor });
+  grouped.get(section).push({ title: subject, sha, gitAuthor, gitEmail });
 }
 
 const parts = ["## What's changed"];
@@ -126,8 +149,38 @@ for (const [, title] of SECTIONS) {
       .join("\n\n")}`,
   );
 }
+
+// ---- new contributors -----------------------------------------------------
+
+/** Identities (handles, else emails) that committed before the previous tag. */
+function priorIdentities() {
+  if (!prev) return new Set();
+  const seen = new Set();
+  for (const email of sh("git", "log", "--format=%ae", prev).split("\n")) {
+    const e = email.trim().toLowerCase();
+    if (!e) continue;
+    seen.add(handleFromEmail(e).toLowerCase() || e);
+  }
+  return seen;
+}
+
+const known = priorIdentities();
+const newcomers = [...authors.entries()]
+  .filter(([key, a]) => a.login && !known.has(key) && !a.login.endsWith("[bot]"))
+  .map(([, a]) => a);
+if (newcomers.length) {
+  parts.push(
+    `<br>\n\n## New Contributors\n\n${newcomers
+      .map((a) => `* @${a.login} made their first contribution in ${contributionLink(a.sha)}`)
+      .join("\n")}`,
+  );
+}
+
 if (prev) {
-  parts.push(`**Full Changelog:** https://github.com/${repo}/compare/${prev}...${tag}`);
+  const compare = `https://github.com/${repo}/compare/${prev}...${tag}`;
+  parts.push(
+    `<br>\n\n<code>Full Changelog <a href="${compare}">${prev}...${tag}</a></code>`,
+  );
 }
 
 const body = parts.join("\n\n") + "\n";
