@@ -316,6 +316,11 @@ fn leading_inset(cx: &App) -> f32 {
         .control_height(ControlSize::Md)
         .to_pixels(rem)
         .as_f32();
+    inset_from(bar, icon)
+}
+
+/// Centers a control in the bar height, never going negative on a short bar.
+fn inset_from(bar: f32, icon: f32) -> f32 {
     ((bar - icon) / 2.0).max(0.0)
 }
 
@@ -428,4 +433,66 @@ fn tab_strip(
             })
             .when(overflowing && offset > -max, |wrap| wrap.child(right_fade))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{chord, chord_any_digit, inset_from, update_state};
+    use crate::core::update::UpdateState;
+    use ely_gpui_component::primitives::IconName;
+
+    #[test]
+    fn chords_lose_their_plus_signs() {
+        assert_eq!(chord("ctrl+shift+tab"), "ctrl-shift-tab");
+        assert_eq!(chord("f5"), "f5");
+        assert_eq!(chord(""), "");
+    }
+
+    #[test]
+    fn a_any_digit_chord_shows_one_star() {
+        assert_eq!(chord_any_digit("ctrl+1"), "ctrl-*");
+        assert_eq!(chord_any_digit("ctrl+shift+9"), "ctrl-shift-*");
+        assert_eq!(chord_any_digit("ctrl+tab"), "ctrl-tab");
+    }
+
+    #[test]
+    fn every_update_state_has_one_icon_and_one_action() {
+        assert_eq!(
+            update_state(&UpdateState::Checking),
+            (IconName::RefreshCw, true, false),
+            "a check in flight spins and cannot be started again"
+        );
+        assert_eq!(
+            update_state(&UpdateState::Downloading("1.0.0".into(), 40)),
+            (IconName::Download, true, false)
+        );
+        assert_eq!(
+            update_state(&UpdateState::Available("1.0.0".into())),
+            (IconName::Download, false, true),
+            "an available update can be downloaded"
+        );
+        assert_eq!(
+            update_state(&UpdateState::Installing("1.0.0".into())),
+            (IconName::CircleCheck, true, true)
+        );
+        assert_eq!(
+            update_state(&UpdateState::UpToDate),
+            (IconName::CircleCheck, true, false)
+        );
+        assert_eq!(
+            update_state(&UpdateState::Idle),
+            (IconName::RefreshCw, false, false)
+        );
+        assert_eq!(
+            update_state(&UpdateState::Failed),
+            (IconName::TriangleAlert, false, false)
+        );
+    }
+
+    #[test]
+    fn an_inset_centers_the_control_and_never_goes_negative() {
+        assert_eq!(inset_from(40.0, 24.0), 8.0);
+        assert_eq!(inset_from(24.0, 24.0), 0.0);
+        assert_eq!(inset_from(16.0, 24.0), 0.0);
+    }
 }

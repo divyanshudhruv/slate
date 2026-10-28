@@ -390,11 +390,6 @@ pub(super) fn tab_menu(ctx: &mut HostCtx) -> Option<(Point<gpui::Pixels>, gpui::
 fn tab_badge(count: usize, cx: &App) -> Div {
     let theme = cx.theme();
     let colors = &theme.colors;
-    let label = if count > 99 {
-        "99+".to_string()
-    } else {
-        count.to_string()
-    };
     div()
         .flex()
         .items_center()
@@ -408,7 +403,16 @@ fn tab_badge(count: usize, cx: &App) -> Div {
         .text_size(px(BADGE_FONT))
         .line_height(px(BADGE_FONT))
         .font_weight(FontWeight::MEDIUM)
-        .child(label)
+        .child(badge_label(count))
+}
+
+/// The badge text, capped so a wide count cannot stretch the tab.
+fn badge_label(count: usize) -> String {
+    if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    }
 }
 
 /// Which row of the all-tabs menu is current, and whether it sits under the keyboard cursor.
@@ -958,4 +962,16 @@ fn close_menu_action(
             c.dispatch(Cmd::CloseTabMenu, cx);
         });
     }) as Action
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn only_a_badge_past_ninety_nine_is_capped() {
+        assert_eq!(super::badge_label(0), "0");
+        assert_eq!(super::badge_label(1), "1");
+        assert_eq!(super::badge_label(99), "99");
+        assert_eq!(super::badge_label(100), "99+");
+        assert_eq!(super::badge_label(usize::MAX), "99+");
+    }
 }

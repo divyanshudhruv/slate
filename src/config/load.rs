@@ -223,8 +223,12 @@ fn value_kind(value: &Value) -> u8 {
 }
 
 pub fn load_sets() -> SavedSets {
-    let path = paths::sets_path();
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    read_sets(&paths::sets_path())
+}
+
+/// Reads sets through a version check, so a newer file is left alone.
+fn read_sets(path: &Path) -> SavedSets {
+    let Ok(text) = std::fs::read_to_string(path) else {
         return SavedSets::default();
     };
     match serde_json::from_str::<Value>(&text) {
@@ -242,7 +246,7 @@ pub fn load_sets() -> SavedSets {
             parse_sets(value)
         }
         Err(_) => {
-            backup(&path);
+            backup(path);
             SavedSets::default()
         }
     }
@@ -353,6 +357,7 @@ pub(super) fn backup_into(dir: &Path, path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::migrate::{cleanup_legacy_at, source_is_newer};
 
     #[test]
     fn settings_only_override_what_the_file_sets() {
@@ -718,5 +723,133 @@ mod tests {
         let shipped: Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("sets.json")).unwrap()).unwrap();
         assert_eq!(shipped, serde_json::to_value(SavedSets::default()).unwrap());
+    }
+
+    #[test]
+    fn a_newer_sets_file_is_left_alone() {
+        let dir = scratch("sets-newer");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sets.json");
+        let text = format!(
+            r#"{{ "schema_version": {}, "sets": [{{ "id": 1, "name": "keep" }}] }}"#,
+            SCHEMA_VERSION + 1
+        );
+        std::fs::write(&path, text).unwrap();
+
+        let sets = read_sets(&path);
+        assert!(
+            sets.sets.is_empty(),
+            "a newer file must not be reinterpreted"
+        );
+        assert!(path.exists(), "a newer file must not be moved aside");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_wrong_typed_list_entry_is_dropped_not_the_file() {
+        let s = settings_from_value(serde_json::json!({
+            "theme": "dark",
+            "tabs": { "count_badge": false },
+            "rules": [
+                { "exe": "game.exe", "never_host": true },
+                7,
+                "nonsense"
+            ]
+        }));
+        assert_eq!(s.theme, crate::config::ThemeMode::Dark);
+        assert!(!s.tabs.count_badge);
+        assert_eq!(s.rules.len(), 1);
+        assert_eq!(s.rules[0].exe, "game.exe");
+        assert!(s.rules[0].never_host);
+    }
+
+    #[test]
+    fn a_wrong_typed_nested_field_keeps_its_siblings() {
+        let s = settings_from_value(serde_json::json!({
+            "tabs": { "icons": "yes", "count_badge": false, "show_bar": "no" }
+        }));
+        assert!(s.tabs.icons, "a bad nested field falls back to its default");
+        assert!(!s.tabs.count_badge);
+        assert!(s.tabs.show_bar);
+    }
+
+    #[test]
+    fn a_stale_legacy_copy_never_wins_a_tie() {
+        let stamp = std::time::SystemTime::now();
+        let src = scratch("tie-src.json");
+        let dest = scratch("tie-dest.json");
+        write_at(&src, "{}", stamp);
+        write_at(&dest, "{}", stamp);
+
+        assert!(!source_is_newer(&src, &dest), "equal mtimes are not newer");
+
+        let older = stamp - std::time::Duration::from_secs(3600);
+        write_at(&src, "{}", older);
+        assert!(
+            !source_is_newer(&src, &dest),
+            "a backwards clock is not newer"
+        );
+
+        let newer = stamp + std::time::Duration::from_secs(60);
+        write_at(&src, "{}", newer);
+        assert!(source_is_newer(&src, &dest));
+
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    #[test]
+    fn cleanup_legacy_waits_for_the_new_install() {
+        let old_root = scratch("cleanup-old");
+        let install_dir = scratch("cleanup-install");
+        let old_app = old_root.join("slate");
+        std::fs::create_dir_all(&old_app).unwrap();
+        std::fs::write(old_app.join("session.json"), "{}").unwrap();
+
+        // No install yet: the old tree is the only copy, so it stays.
+        cleanup_legacy_at(&old_root, &install_dir, None);
+        assert!(old_app.is_dir());
+
+        // An install exists: the old tree goes.
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::write(
+            install_dir.join(crate::core::install::CANONICAL_NAME),
+            b"exe",
+        )
+        .unwrap();
+        cleanup_legacy_at(&old_root, &install_dir, None);
+        assert!(!old_app.exists());
+        assert!(!old_root.exists(), "an emptied legacy root goes too");
+
+        let _ = std::fs::remove_dir_all(&install_dir);
+    }
+
+    #[test]
+    fn cleanup_legacy_spares_the_running_copy() {
+        let old_root = scratch("cleanup-running");
+        let install_dir = scratch("cleanup-install-running");
+        let old_app = old_root.join("slate");
+        std::fs::create_dir_all(&old_app).unwrap();
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::write(
+            install_dir.join(crate::core::install::CANONICAL_NAME),
+            b"exe",
+        )
+        .unwrap();
+
+        cleanup_legacy_at(&old_root, &install_dir, Some(&old_app));
+        assert!(old_app.is_dir(), "never delete the tree this exe runs from");
+
+        let _ = std::fs::remove_dir_all(&old_root);
+        let _ = std::fs::remove_dir_all(&install_dir);
+    }
+
+    #[test]
+    fn cleanup_legacy_is_a_noop_without_a_legacy_tree() {
+        let old_root = scratch("cleanup-absent");
+        let install_dir = scratch("cleanup-absent-install");
+        cleanup_legacy_at(&old_root, &install_dir, None);
+        assert!(!old_root.exists());
     }
 }

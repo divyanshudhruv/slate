@@ -18,26 +18,17 @@ pub struct Janitor {
     path: Option<PathBuf>,
     started: bool,
     last: Option<Vec<u8>>,
-    recovered: Vec<isize>,
 }
 
 impl Janitor {
     pub fn new() -> Self {
+        // Restores whatever a previous crash left behind; the windows stay where the session put them.
+        sweep_stale();
         Self {
             path: Some(state_path()),
             started: false,
             last: None,
-            recovered: sweep_stale(),
         }
-    }
-
-    /// Windows the janitor freed after a crash, offered back as a session restore.
-    pub fn recovered(&self) -> &[isize] {
-        &self.recovered
-    }
-
-    pub fn clear_recovered(&mut self) {
-        self.recovered.clear();
     }
 
     /// Drops the payload after a clean restore, so the child janitor has nothing left to replay.
@@ -205,11 +196,10 @@ pub fn spawn(path: &Path) {
         .spawn();
 }
 
-pub fn sweep_stale() -> Vec<isize> {
+pub fn sweep_stale() {
     let dir = crate::config::paths::data_dir();
-    let mut recovered = Vec::new();
     let Ok(entries) = std::fs::read_dir(&dir) else {
-        return recovered;
+        return;
     };
     let me = std::process::id();
     for entry in entries.flatten() {
@@ -232,7 +222,6 @@ pub fn sweep_stale() -> Vec<isize> {
                 continue;
             }
         };
-        recovered.extend(outcome.recovered);
         if outcome.complete {
             let _ = std::fs::remove_file(&path);
         } else {
@@ -240,7 +229,6 @@ pub fn sweep_stale() -> Vec<isize> {
             quarantine(&path);
         }
     }
-    recovered
 }
 
 /// Renames a payload that could not be fully restored, keeping it for support without retrying it.
@@ -320,16 +308,12 @@ fn watch(pid: u32) -> windows::core::Result<()> {
 }
 
 struct RestoreOutcome {
-    recovered: Vec<isize>,
     /// False when a window was still owned and a write did not take, so replaying the payload could double-restore.
     complete: bool,
 }
 
 fn restore(bytes: &[u8]) -> RestoreOutcome {
-    let mut outcome = RestoreOutcome {
-        recovered: Vec::new(),
-        complete: true,
-    };
+    let mut outcome = RestoreOutcome { complete: true };
     let Some(key) = hmac_key() else {
         outcome.complete = false;
         return outcome;
@@ -350,7 +334,6 @@ fn restore(bytes: &[u8]) -> RestoreOutcome {
         }
         let ok = unregister_member(hwnd, &st);
         outcome.complete &= ok;
-        outcome.recovered.push(hwnd);
     }
     outcome
 }

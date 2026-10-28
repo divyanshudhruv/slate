@@ -141,8 +141,6 @@ pub enum Cmd {
     },
     ResetKeybinds,
     CommitKeybinds,
-    RestoreRecovered,
-    DismissRecovered,
 }
 
 #[derive(Clone)]
@@ -260,7 +258,6 @@ pub struct SavedSetInfo {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dialog {
     Keybinds,
-    Recovery,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

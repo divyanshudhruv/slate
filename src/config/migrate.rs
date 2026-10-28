@@ -144,15 +144,23 @@ fn newest_theme(old_config: &Path, new_config: &Path) -> Option<(Option<String>,
 
 /// Removes the old app folder only, never the shared ~/.burntfern root.
 pub(super) fn cleanup_legacy() {
-    let old_root = paths::legacy_root();
+    cleanup_legacy_at(
+        &paths::legacy_root(),
+        &paths::install_dir(),
+        current_exe_dir().as_deref(),
+    );
+}
+
+/// Removes `old_root/slate` only once the new install exists and this exe is not running from it.
+pub(super) fn cleanup_legacy_at(old_root: &Path, install_dir: &Path, exe_dir: Option<&Path>) {
     let old_app = old_root.join("slate");
     if !old_app.is_dir() {
         return;
     }
-    if current_exe_dir().is_some_and(|dir| same_dir(&dir, &old_app)) {
+    if exe_dir.is_some_and(|dir| same_dir(dir, &old_app)) {
         return;
     }
-    let new_exe = paths::install_dir().join(crate::core::install::CANONICAL_NAME);
+    let new_exe = install_dir.join(crate::core::install::CANONICAL_NAME);
     // Only once the new install exists; until then the old tree holds the only copy of Slate.
     if !new_exe.exists() {
         return;

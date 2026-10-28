@@ -98,3 +98,72 @@ fn rename_with_retry(tmp: &Path, path: &Path) -> io::Result<()> {
     }
     Err(last.unwrap_or_else(|| io::Error::other("could not replace the file")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("slate-save-test-{}-{name}-{n}", std::process::id()))
+    }
+
+    /// The temp files `atomic_write` stages beside its destination.
+    fn temp_leftovers(dir: &Path) -> Vec<String> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with('.'))
+            .collect()
+    }
+
+    #[test]
+    fn atomic_write_replaces_in_place() {
+        let dir = scratch("replace");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+
+        atomic_write(&path, b"one").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"one");
+        atomic_write(&path, b"two").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        assert!(
+            temp_leftovers(&dir).is_empty(),
+            "a write leaves no temp file"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_write_cleans_up_when_it_cannot_write() {
+        let dir = scratch("unwritable");
+        let path = dir.join("nested").join("settings.json");
+
+        assert!(atomic_write(&path, b"x").is_err());
+        assert!(!path.exists());
+        assert!(temp_leftovers(&dir).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_locked_destination_surfaces_an_error() {
+        let dir = scratch("locked");
+        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = dir.join("write.tmp");
+        std::fs::write(&tmp, b"x").unwrap();
+        // A directory in the destination's place fails every rename attempt.
+        let dest = dir.join("settings.json");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        assert!(rename_with_retry(&tmp, &dest).is_err());
+        assert!(tmp.exists(), "the caller still owns the temp file");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

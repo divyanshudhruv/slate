@@ -185,7 +185,10 @@ pub fn staged_download_name(version: &str, arch: &str) -> String {
 mod tests {
     use super::*;
 
-    const CANON: &str = "C:\\Users\\a\\.burntfern\\slate\\slate.exe";
+    /// The install the plan function actually sees, under `%LOCALAPPDATA%`.
+    const CANON: &str = "C:\\Users\\a\\AppData\\Local\\Programs\\Burntfern\\Slate\\slate.exe";
+    /// The pre-0.5 home, kept for the migration case.
+    const LEGACY: &str = "C:\\Users\\a\\.burntfern\\slate\\slate.exe";
     const DOWNLOAD_1: &str = "C:\\Users\\a\\Downloads\\slate-v0.1.0-x64.exe";
     const DOWNLOAD_2: &str = "C:\\Users\\a\\Downloads\\slate-v0.2.0-x64.exe";
 
@@ -208,11 +211,41 @@ mod tests {
     fn the_backup_lives_beside_the_exe_it_replaces() {
         assert_eq!(
             backup_path(Path::new(CANON)),
-            Path::new("C:\\Users\\a\\.burntfern\\slate\\slate.exe.old")
+            Path::new("C:\\Users\\a\\AppData\\Local\\Programs\\Burntfern\\Slate\\slate.exe.old")
         );
         assert_eq!(
             backup_path(Path::new(CANON)).parent(),
             Path::new(CANON).parent()
+        );
+    }
+
+    #[test]
+    fn a_stale_legacy_copy_is_no_longer_canonical() {
+        // Since 0.5 the install lives under %LOCALAPPDATA%; an old copy just runs where it is.
+        assert_eq!(
+            classify(sit(LEGACY, None, false, false)),
+            Plan::Run {
+                exe: LEGACY.into(),
+                canonical: false
+            }
+        );
+        assert_eq!(
+            classify(sit(LEGACY, None, true, false)),
+            Plan::Run {
+                exe: LEGACY.into(),
+                canonical: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_record_without_a_pid_keeps_running_instead_of_focusing() {
+        assert_eq!(
+            classify(sit(CANON, Some((CANON, "0.4.0", 0)), true, true)),
+            Plan::Run {
+                exe: CANON.into(),
+                canonical: true
+            }
         );
     }
 

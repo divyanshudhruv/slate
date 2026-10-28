@@ -5,8 +5,7 @@ use gpui::{div, App, Entity, IntoElement, Keystroke, Modifiers, Window};
 use ely_gpui_component::buttons::Button;
 use ely_gpui_component::forms::HotkeyInput;
 use ely_gpui_component::overlays::Dialog;
-use ely_gpui_component::primitives::{Icon, IconName};
-use ely_gpui_component::theme::{ActiveTheme, IconSize, TextSize};
+use ely_gpui_component::theme::{ActiveTheme, TextSize};
 
 use crate::controller::{Cmd, Controller, Dialog as SlateDialog};
 use crate::core::keys::{self, Chord, KeyAction, ACTIONS};
@@ -16,73 +15,9 @@ pub(super) fn in_host_dialog(
     controller: &Entity<Controller>,
     cx: &App,
 ) -> Option<gpui::AnyElement> {
-    let kind = controller.read(cx).dialog()?;
-    match kind {
+    match controller.read(cx).dialog()? {
         SlateDialog::Keybinds => Some(keybinds_dialog(controller, cx)),
-        SlateDialog::Recovery => Some(recovery_dialog(controller, cx)),
     }
-}
-
-fn recovery_dialog(controller: &Entity<Controller>, cx: &App) -> gpui::AnyElement {
-    let theme = cx.theme();
-    let count = controller.read(cx).recovered_count();
-    let title = if count == 1 {
-        "Restore last window?"
-    } else {
-        "Restore last session?"
-    };
-    let note = if count == 1 {
-        "Slate closed unexpectedly and freed one window. Open it as a tab again?".to_string()
-    } else {
-        format!("Slate closed unexpectedly and freed {count} windows. Open them as tabs again?")
-    };
-
-    let ctrl_close = controller.clone();
-    let mut dialog = Dialog::new("slate-recovery", title, move |_window, cx| {
-        ctrl_close.update(cx, |c, cx| c.dispatch(Cmd::DismissRecovered, cx));
-    });
-    dialog = dialog.child(
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2()
-            .child(
-                Icon::new(IconName::Archive)
-                    .size(IconSize::Lg)
-                    .color(theme.colors.accent),
-            )
-            .child(
-                div()
-                    .text_size(theme.text_size(TextSize::Sm))
-                    .text_color(theme.colors.fg_muted)
-                    .child(note),
-            ),
-    );
-
-    let ctrl_later = controller.clone();
-    dialog = dialog.action(move |close| {
-        let ctrl = ctrl_later.clone();
-        Button::new("rec-later", "Not now")
-            .variant(ely_gpui_component::buttons::ButtonVariant::Ghost)
-            .on_click(move |_ev, window, cx| {
-                ctrl.update(cx, |c, cx| c.dispatch(Cmd::DismissRecovered, cx));
-                close(window, cx);
-            })
-    });
-
-    let ctrl_restore = controller.clone();
-    dialog = dialog.action(move |close| {
-        let ctrl = ctrl_restore.clone();
-        Button::new("rec-now", "Restore")
-            .primary()
-            .on_click(move |_ev, window, cx| {
-                ctrl.update(cx, |c, cx| c.dispatch(Cmd::RestoreRecovered, cx));
-                close(window, cx);
-            })
-    });
-
-    dialog.into_any_element()
 }
 
 fn stroke_of(chord: Chord) -> Option<Keystroke> {

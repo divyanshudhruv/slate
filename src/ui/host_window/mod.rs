@@ -174,29 +174,8 @@ fn banner_strip(
         return Some(banner.into_any_element());
     }
     // The updater uses the same banner, wearing the severity that fits the state.
-    let (severity, text, action) = match &info.update {
-        UpdateState::Available(version) => {
-            if info.update_banner_hidden.as_deref() == Some(version.as_str()) {
-                return None;
-            }
-            (
-                Severity::Info,
-                format!("Slate v{version} is available."),
-                Some(("Download", BannerAction::InstallUpdate)),
-            )
-        }
-        UpdateState::Downloading(version, percent) => (
-            Severity::Info,
-            format!("Downloading Slate v{version}: {percent}%"),
-            None,
-        ),
-        UpdateState::Installing(version) => (
-            Severity::Warning,
-            format!("Slate v{version} is ready - restart to finish."),
-            Some(("Restart", BannerAction::RestartUpdate)),
-        ),
-        _ => return None,
-    };
+    let (severity, text, action) =
+        update_banner(&info.update, info.update_banner_hidden.as_deref())?;
     let mut banner = Banner::new(ElementId::named_usize("update-banner", 0), severity, text);
     if let Some((label, action)) = action {
         let ctrl = controller.clone();
@@ -212,6 +191,36 @@ fn banner_strip(
         });
     }
     Some(banner.into_any_element())
+}
+
+/// The severity, text and optional action for one update banner.
+type UpdateBanner = (Severity, String, Option<(&'static str, BannerAction)>);
+
+/// Which updater banner says something worth a strip, and whether a version was waved off.
+fn update_banner(update: &UpdateState, hidden: Option<&str>) -> Option<UpdateBanner> {
+    match update {
+        UpdateState::Available(version) => {
+            if hidden == Some(version.as_str()) {
+                return None;
+            }
+            Some((
+                Severity::Info,
+                format!("Slate v{version} is available."),
+                Some(("Download", BannerAction::InstallUpdate)),
+            ))
+        }
+        UpdateState::Downloading(version, percent) => Some((
+            Severity::Info,
+            format!("Downloading Slate v{version}: {percent}%"),
+            None,
+        )),
+        UpdateState::Installing(version) => Some((
+            Severity::Warning,
+            format!("Slate v{version} is ready - restart to finish."),
+            Some(("Restart", BannerAction::RestartUpdate)),
+        )),
+        _ => None,
+    }
 }
 
 /// Builds the tab strip; every behaviour only forwards a `Cmd` to the controller.
@@ -579,5 +588,64 @@ impl Render for HostWindow {
         content
             .child(render_banner(&info, controller.clone(), titlebar_h))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::update_banner;
+    use crate::controller::BannerAction;
+    use crate::core::UpdateState;
+    use ely_gpui_component::primitives::Severity;
+
+    #[test]
+    fn an_available_update_offers_a_download() {
+        let (severity, text, action) =
+            update_banner(&UpdateState::Available("0.5.0".into()), None).expect("an offer");
+        assert_eq!(severity, Severity::Info);
+        assert_eq!(text, "Slate v0.5.0 is available.");
+        let (label, action) = action.expect("an action");
+        assert_eq!(label, "Download");
+        assert!(matches!(action, BannerAction::InstallUpdate));
+    }
+
+    #[test]
+    fn a_waved_off_version_stays_hidden() {
+        assert!(update_banner(&UpdateState::Available("0.5.0".into()), Some("0.5.0")).is_none());
+        assert!(
+            update_banner(&UpdateState::Available("0.5.1".into()), Some("0.5.0")).is_some(),
+            "a newer version shows again"
+        );
+    }
+
+    #[test]
+    fn a_download_reports_progress_and_cannot_be_dismissed() {
+        let (severity, text, action) =
+            update_banner(&UpdateState::Downloading("0.5.0".into(), 42), None).expect("progress");
+        assert_eq!(severity, Severity::Info);
+        assert_eq!(text, "Downloading Slate v0.5.0: 42%");
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn a_ready_build_offers_a_restart() {
+        let (severity, _, action) =
+            update_banner(&UpdateState::Installing("0.5.0".into()), None).expect("a restart");
+        assert_eq!(severity, Severity::Warning);
+        let (label, action) = action.expect("an action");
+        assert_eq!(label, "Restart");
+        assert!(matches!(action, BannerAction::RestartUpdate));
+    }
+
+    #[test]
+    fn quiet_states_show_no_update_banner() {
+        for state in [
+            UpdateState::Idle,
+            UpdateState::Checking,
+            UpdateState::UpToDate,
+            UpdateState::Failed,
+        ] {
+            assert!(update_banner(&state, None).is_none(), "{state:?}");
+        }
     }
 }
