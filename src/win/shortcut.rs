@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicIsize, AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -87,36 +87,52 @@ pub fn set_bindings(entries: &[(Shortcut, Chord)]) {
     BINDING_COUNT.store(count, Ordering::Release);
 }
 
-const MAX_OWNED: usize = 1024;
-
+/// Window set read by the hook while the UI thread updates it, without truncation.
 struct OwnedSet {
-    len: AtomicUsize,
-    items: [AtomicIsize; MAX_OWNED],
+    seq: AtomicUsize,
+    readers: AtomicUsize,
+    items: std::cell::UnsafeCell<Vec<isize>>,
 }
+
+unsafe impl Sync for OwnedSet {}
 
 impl OwnedSet {
     const fn new() -> Self {
         Self {
-            len: AtomicUsize::new(0),
-            items: [const { AtomicIsize::new(0) }; MAX_OWNED],
+            seq: AtomicUsize::new(0),
+            readers: AtomicUsize::new(0),
+            items: std::cell::UnsafeCell::new(Vec::new()),
         }
     }
 
     fn set(&self, hwnds: impl IntoIterator<Item = isize>) {
-        let mut n = 0;
-        for hwnd in hwnds {
-            if n == MAX_OWNED {
-                break;
-            }
-            self.items[n].store(hwnd, Ordering::Relaxed);
-            n += 1;
+        let next: Vec<isize> = hwnds.into_iter().collect();
+        self.seq.fetch_add(1, Ordering::AcqRel);
+        while self.readers.load(Ordering::Acquire) != 0 {
+            std::thread::yield_now();
         }
-        self.len.store(n, Ordering::Release);
+        unsafe {
+            *self.items.get() = next;
+        }
+        self.seq.fetch_add(1, Ordering::Release);
     }
 
     fn contains(&self, hwnd: isize) -> bool {
-        let n = self.len.load(Ordering::Acquire).min(MAX_OWNED);
-        (0..n).any(|i| self.items[i].load(Ordering::Relaxed) == hwnd)
+        loop {
+            let seq = self.seq.load(Ordering::Acquire);
+            if seq & 1 != 0 {
+                std::hint::spin_loop();
+                continue;
+            }
+            self.readers.fetch_add(1, Ordering::AcqRel);
+            if self.seq.load(Ordering::Acquire) != seq {
+                self.readers.fetch_sub(1, Ordering::AcqRel);
+                continue;
+            }
+            let found = unsafe { (*self.items.get()).contains(&hwnd) };
+            self.readers.fetch_sub(1, Ordering::Release);
+            return found;
+        }
     }
 }
 
@@ -324,5 +340,13 @@ mod tests {
     #[test]
     fn invalid_chords_are_not_packed() {
         assert!(Binding::new(Shortcut::NextTab, chord(0, false, false)).is_none());
+    }
+
+    #[test]
+    fn owned_set_is_not_truncated() {
+        set_owned(1..=2_000);
+        assert!(owned().contains(1));
+        assert!(owned().contains(2_000));
+        assert!(!owned().contains(0));
     }
 }
