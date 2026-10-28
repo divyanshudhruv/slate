@@ -67,7 +67,7 @@ pub(super) fn startup_install() -> crate::core::install::Plan {
 
 impl Controller {
     pub(super) fn check_for_updates(&mut self, force: bool, cx: &mut Context<Self>) {
-        if matches!(self.update, UpdateState::Available(_)) {
+        if matches!(self.updater.state, UpdateState::Available(_)) {
             // The offer is already on screen as a banner; a second check would only repeat it.
             return;
         }
@@ -78,7 +78,7 @@ impl Controller {
         }
         self.settings.updates.checked_at = now;
         self.save_settings();
-        self.update = UpdateState::Checking;
+        self.updater.state = UpdateState::Checking;
         self.invalidate_info();
         cx.notify();
         let channel = self.settings.updates.channel;
@@ -101,8 +101,8 @@ impl Controller {
     }
 
     pub(super) fn install_available_update(&mut self, version: String, cx: &mut Context<Self>) {
-        self.pending_install = None;
-        self.update = UpdateState::Downloading(version.clone(), 0);
+        self.updater.pending_install = None;
+        self.updater.state = UpdateState::Downloading(version.clone(), 0);
         self.invalidate_info();
         cx.notify();
         // The download thread writes here; the banner polls it so progress ticks without a channel.
@@ -122,13 +122,13 @@ impl Controller {
             },
             move |controller, result, cx| match result {
                 Ok((staged_version, staged)) => {
-                    controller.pending_install = Some((staged_version.clone(), staged));
-                    controller.update = UpdateState::Installing(staged_version);
+                    controller.updater.pending_install = Some((staged_version.clone(), staged));
+                    controller.updater.state = UpdateState::Installing(staged_version);
                     controller.invalidate_info();
                     cx.notify();
                 }
                 Err(err) => {
-                    controller.update = UpdateState::Available(version);
+                    controller.updater.state = UpdateState::Available(version);
                     controller.invalidate_info();
                     cx.notify();
                     controller.note_error(
@@ -158,13 +158,13 @@ impl Controller {
 
     /// Copies the download counter into the state so the banner can show the same number.
     fn report_download(&mut self, percent: &AtomicU8, cx: &mut Context<Self>) -> bool {
-        let (version, seen) = match &self.update {
+        let (version, seen) = match &self.updater.state {
             UpdateState::Downloading(version, seen) => (version.clone(), *seen),
             _ => return false,
         };
         let arrived = percent.load(Ordering::Relaxed);
         if arrived != seen {
-            self.update = UpdateState::Downloading(version, arrived);
+            self.updater.state = UpdateState::Downloading(version, arrived);
             self.invalidate_info();
             cx.notify();
         }
@@ -173,7 +173,7 @@ impl Controller {
 
     /// Restart on the Ready banner: hand the staged build to the swap helper, then quit.
     pub(super) fn restart_for_update(&mut self, cx: &mut Context<Self>) {
-        let Some((version, staged)) = self.pending_install.clone() else {
+        let Some((version, staged)) = self.updater.pending_install.clone() else {
             return;
         };
         let canonical = config::canonical_exe_path();
@@ -210,12 +210,12 @@ impl Controller {
                 self.save_settings();
                 // The banner follows the state, so nothing else has to announce it.
                 // A version the user waved off stays hidden; a newer one shows again.
-                self.update = UpdateState::Available(version);
+                self.updater.state = UpdateState::Available(version);
             }
             Ok(_) => {
                 self.settings.updates.latest = None;
                 self.save_settings();
-                self.update = UpdateState::UpToDate;
+                self.updater.state = UpdateState::UpToDate;
                 if notify {
                     self.note_success(
                         format!("Slate v{} is the latest release.", update::CURRENT_VERSION),
@@ -224,7 +224,7 @@ impl Controller {
                 }
             }
             Err(err) => {
-                self.update = UpdateState::Failed;
+                self.updater.state = UpdateState::Failed;
                 if notify {
                     self.note_error(
                         format!("Update check failed: {err}"),

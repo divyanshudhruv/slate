@@ -148,10 +148,10 @@ impl Controller {
         }
         self.pick_gen = self.pick_gen.wrapping_add(1);
         if matches!(
-            self.banner.as_ref().map(|banner| &banner.kind),
+            self.updater.banner.as_ref().map(|banner| &banner.kind),
             Some(BannerKind::Pick)
         ) {
-            self.banner = None;
+            self.updater.banner = None;
         }
         self.invalidate_info();
     }

@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde_json::Value;
 
+use super::migrate::{cleanup_legacy, migrate_legacy};
 use super::paths;
 use super::schema::{AppRule, SavedSet, SavedSets, SavedTab, Session, Settings, SCHEMA_VERSION};
 
@@ -38,197 +39,20 @@ pub fn ensure() {
 
 fn seed_defaults() {
     if !paths::settings_path().exists() {
-        seed("slate\\settings.json", &paths::settings_path(), &AppSeed);
+        seed("slate\\settings.json", &paths::settings_path(), app_seed());
     }
     if !paths::sets_path().exists() {
-        seed("slate\\sets.json", &paths::sets_path(), &SetsSeed);
+        seed("slate\\sets.json", &paths::sets_path(), sets_seed());
     }
 }
 
-/// Copies the old layout over, keeping whichever copy of a file is newer.
-fn migrate_legacy(old_root: &Path, new_root: &Path) -> bool {
-    if !old_root.is_dir() {
-        return true;
-    }
-    let old_app = old_root.join("slate");
-    let backups = new_root.join("backups");
-    let mut complete = true;
-    for name in ["settings.json", "sets.json", "session.json", "install.json"] {
-        let src = old_app.join(name);
-        let dest = new_root.join(name);
-        if !src.is_file() {
-            continue;
-        }
-        if dest.exists() {
-            if !source_is_newer(&src, &dest) {
-                continue;
-            }
-            if !backup_into(&backups, &dest) {
-                tracing::warn!("could not back up {}; leaving it in place", dest.display());
-                complete = false;
-                continue;
-            }
-        }
-        if let Err(err) = copy_json(&src, &dest) {
-            tracing::warn!("could not migrate {}: {err}", src.display());
-            complete = false;
-        }
-    }
-    if !merge_theme_sources(old_root, new_root) {
-        complete = false;
-    }
-    complete
+/// The bytes a seeded settings file starts with, before a template overrides it.
+fn app_seed() -> String {
+    pretty(&super::save::app_value(&Settings::default()))
 }
 
-fn source_is_newer(src: &Path, dest: &Path) -> bool {
-    let modified = |path: &Path| path.metadata().and_then(|meta| meta.modified()).ok();
-    match (modified(src), modified(dest)) {
-        (Some(src), Some(dest)) => src > dest,
-        (Some(_), None) => true,
-        _ => false,
-    }
-}
-
-fn copy_json(src: &Path, dest: &Path) -> std::io::Result<()> {
-    let bytes = std::fs::read(src)?;
-    serde_json::from_slice::<Value>(&bytes).map_err(std::io::Error::other)?;
-    if let Some(dir) = dest.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    super::save::atomic_write(dest, &bytes)
-}
-
-/// Folds theme and accent into settings.json, from the newest config.json.
-fn merge_theme_sources(old_root: &Path, new_root: &Path) -> bool {
-    let settings = new_root.join("settings.json");
-    let new_config = new_root.join("config.json");
-    let mut merged = std::fs::read_to_string(&settings)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .filter(Value::is_object)
-        .unwrap_or_else(|| serde_json::json!({ "schema_version": SCHEMA_VERSION }));
-    let has_theme = merged.get("theme").and_then(Value::as_str).is_some();
-    let has_accent = merged.get("accent").and_then(Value::as_str).is_some();
-    let mut changed = false;
-    if !(has_theme && has_accent) {
-        if let Some((theme, accent)) = newest_theme(&old_root.join("config.json"), &new_config) {
-            if let Some(object) = merged.as_object_mut() {
-                object.insert("schema_version".into(), SCHEMA_VERSION.into());
-                if !has_theme {
-                    if let Some(theme) = theme {
-                        object.insert("theme".into(), theme.into());
-                        changed = true;
-                    }
-                }
-                if !has_accent {
-                    if let Some(accent) = accent {
-                        object.insert("accent".into(), accent.into());
-                        changed = true;
-                    }
-                }
-            }
-        }
-    }
-    if changed {
-        let Ok(mut text) = serde_json::to_string_pretty(&merged) else {
-            return false;
-        };
-        text.push('\n');
-        if let Some(dir) = settings.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if super::save::atomic_write(&settings, text.as_bytes()).is_err() {
-            return false;
-        }
-    }
-    if new_config.is_file() && !backup_into(&new_root.join("backups"), &new_config) {
-        tracing::warn!("could not move {} aside", new_config.display());
-        return false;
-    }
-    true
-}
-
-fn newest_theme(old_config: &Path, new_config: &Path) -> Option<(Option<String>, Option<String>)> {
-    let mut best: Option<(std::time::SystemTime, Option<String>, Option<String>)> = None;
-    for path in [old_config, new_config] {
-        let Ok(text) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<Value>(&text) else {
-            continue;
-        };
-        let theme = value
-            .get("theme")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        let accent = value
-            .get("accent")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        if theme.is_none() && accent.is_none() {
-            continue;
-        }
-        let modified = path
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .unwrap_or(std::time::UNIX_EPOCH);
-        if best.as_ref().is_none_or(|(stamp, ..)| modified >= *stamp) {
-            best = Some((modified, theme, accent));
-        }
-    }
-    best.map(|(_, theme, accent)| (theme, accent))
-}
-
-/// Removes the old app folder only, never the shared ~/.burntfern root.
-fn cleanup_legacy() {
-    let old_root = paths::legacy_root();
-    let old_app = old_root.join("slate");
-    if !old_app.is_dir() {
-        return;
-    }
-    if current_exe_dir().is_some_and(|dir| same_dir(&dir, &old_app)) {
-        return;
-    }
-    let new_exe = paths::install_dir().join(crate::core::install::CANONICAL_NAME);
-    // Only once the new install exists; until then the old tree holds the only copy of Slate.
-    if !new_exe.exists() {
-        return;
-    }
-    if std::fs::remove_dir_all(&old_app).is_err() {
-        return;
-    }
-    let _ = std::fs::remove_dir(&old_root);
-}
-
-fn current_exe_dir() -> Option<PathBuf> {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
-    a.as_os_str()
-        .to_string_lossy()
-        .eq_ignore_ascii_case(&b.to_string_lossy())
-}
-
-trait Seed {
-    fn content(&self) -> String;
-}
-
-struct AppSeed;
-struct SetsSeed;
-
-impl Seed for AppSeed {
-    fn content(&self) -> String {
-        pretty(&super::save::app_value(&Settings::default()))
-    }
-}
-
-impl Seed for SetsSeed {
-    fn content(&self) -> String {
-        pretty(&SavedSets::default())
-    }
+fn sets_seed() -> String {
+    pretty(&SavedSets::default())
 }
 
 /// The exact bytes a save would write, so a seeded file and a saved one agree.
@@ -242,7 +66,7 @@ fn pretty(value: &impl serde::Serialize) -> String {
     )
 }
 
-fn seed(template_rel: &str, dest: &Path, fallback: &dyn Seed) {
+fn seed(template_rel: &str, dest: &Path, fallback: String) {
     if let Some(dir) = template_dir() {
         if let Ok(bytes) = std::fs::read(dir.join(template_rel)) {
             if write_new(dest, &bytes) {
@@ -250,7 +74,7 @@ fn seed(template_rel: &str, dest: &Path, fallback: &dyn Seed) {
             }
         }
     }
-    let _ = write_new(dest, fallback.content().as_bytes());
+    let _ = write_new(dest, fallback.as_bytes());
 }
 
 fn write_new(dest: &Path, bytes: &[u8]) -> bool {
@@ -271,11 +95,7 @@ fn write_new(dest: &Path, bytes: &[u8]) -> bool {
 }
 
 pub fn load() -> Settings {
-    let mut settings = read_settings(&paths::settings_path()).unwrap_or_default();
-    settings.preview_delay_ms = settings
-        .preview_delay_ms
-        .min(crate::timings::MAX_PREVIEW_DELAY_MS);
-    settings
+    read_settings(&paths::settings_path()).unwrap_or_default()
 }
 
 /// Reads settings through a type check, so one bad field does not drop the rest.
@@ -478,16 +298,10 @@ fn parse_sets(value: Value) -> SavedSets {
 
 fn assign_ids(sets: &mut [SavedSet]) {
     let mut used: Vec<u64> = Vec::with_capacity(sets.len());
-    let mut next = sets
-        .iter()
-        .map(|s| s.id)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
+    let mut counter = sets.iter().map(|s| s.id).max().unwrap_or(0).wrapping_add(1);
     for set in sets.iter_mut() {
         if set.id == 0 || used.contains(&set.id) {
-            set.id = next;
-            next = next.saturating_add(1);
+            set.id = crate::core::take_id(&mut counter);
         }
         used.push(set.id);
     }
@@ -511,7 +325,7 @@ fn backup(path: &Path) {
 }
 
 /// Moves a file aside. False means it could not be preserved.
-fn backup_into(dir: &Path, path: &Path) -> bool {
+pub(super) fn backup_into(dir: &Path, path: &Path) -> bool {
     let Some(name) = path.file_name() else {
         return false;
     };

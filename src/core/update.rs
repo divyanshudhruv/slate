@@ -178,14 +178,13 @@ impl Channel {
 impl<'de> serde::Deserialize<'de> for Channel {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = <String as serde::Deserialize>::deserialize(deserializer)?;
-        Ok(match text.to_ascii_lowercase().as_str() {
-            "beta" => Self::Beta,
-            "stable" => Self::Stable,
-            other => {
-                tracing::warn!("unknown update channel '{other}', using stable");
-                Self::Stable
-            }
-        })
+        Ok(
+            crate::core::from_name(&text, &[("stable", Self::Stable), ("beta", Self::Beta)])
+                .unwrap_or_else(|| {
+                    tracing::warn!("unknown update channel '{text}', using stable");
+                    Self::Stable
+                }),
+        )
     }
 }
 

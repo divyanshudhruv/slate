@@ -1,5 +1,6 @@
 mod install;
 mod load;
+mod migrate;
 pub mod paths;
 mod save;
 mod schema;

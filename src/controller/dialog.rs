@@ -61,7 +61,7 @@ fn draft_from_settings(settings: &config::Settings) -> Vec<Option<Chord>> {
 
 impl Controller {
     pub fn dialog(&self) -> Option<Dialog> {
-        self.dialog
+        self.menus.dialog
     }
 
     pub fn keybind_draft(&self) -> &[Option<Chord>] {
@@ -70,20 +70,20 @@ impl Controller {
 
     pub(super) fn open_keybinds(&mut self) {
         self.close_other_dropdowns();
-        self.overlay = false;
-        self.tab_menu_open = false;
-        self.tab_menu = None;
-        self.picker_open = false;
-        self.saved_menu_open = false;
-        self.hover_preview = None;
+        self.menus.overlay = false;
+        self.menus.tab_menu_open = false;
+        self.menus.tab_menu = None;
+        self.menus.picker_open = false;
+        self.menus.saved_menu_open = false;
+        self.menus.hover_preview = None;
         self.hide_hover_preview();
         self.keybind_draft = draft_from_settings(&self.settings);
         self.keybind_error = None;
-        self.dialog = Some(Dialog::Keybinds);
+        self.menus.dialog = Some(Dialog::Keybinds);
     }
 
     pub(super) fn close_dialog(&mut self) {
-        self.dialog = None;
+        self.menus.dialog = None;
     }
 
     pub(super) fn set_keybind_chord(

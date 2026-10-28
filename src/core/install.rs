@@ -78,9 +78,10 @@ pub fn classify(s: Situation) -> Plan {
     }
     if same_path(s.exe, s.canonical) {
         if s.record_canonical_alive {
-            return Plan::FocusRunning {
-                pid: s.record.map(|r| r.pid).unwrap_or(0),
-            };
+            // A record without a pid cannot be focused; fall through and keep this copy running.
+            if let Some(pid) = s.record.map(|r| r.pid).filter(|pid| *pid != 0) {
+                return Plan::FocusRunning { pid };
+            }
         }
         return Plan::Run {
             exe: s.exe.to_string(),

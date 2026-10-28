@@ -41,22 +41,22 @@ impl Controller {
             Cmd::ReorderTab { group, from, to } => self.reorder(group, from, to),
             Cmd::BeginPick => self.begin_pick(cx),
             Cmd::ToggleIconsInTabs => self.toggle_icons_in_tabs(),
-            Cmd::SetOverlay(open) => self.overlay = open,
-            Cmd::ToggleOverlay => self.overlay = !self.overlay,
+            Cmd::SetOverlay(open) => self.menus.overlay = open,
+            Cmd::ToggleOverlay => self.menus.overlay = !self.menus.overlay,
             Cmd::SetTabMenu(open) => {
                 if open {
                     self.close_other_dropdowns();
                 }
-                self.tab_menu_open = open;
-                self.tab_menu_cursor = None;
+                self.menus.tab_menu_open = open;
+                self.menus.tab_menu_cursor = None;
             }
             Cmd::ToggleTabMenu => {
-                let open = !self.tab_menu_open;
+                let open = !self.menus.tab_menu_open;
                 if open {
                     self.close_other_dropdowns();
                 }
-                self.tab_menu_open = open;
-                self.tab_menu_cursor = None;
+                self.menus.tab_menu_open = open;
+                self.menus.tab_menu_cursor = None;
             }
             Cmd::MoveTabMenuCursor { delta } => self.move_tab_menu_cursor(delta),
             Cmd::ConfirmTabMenuCursor => self.open_tab_menu_cursor(),
@@ -64,47 +64,47 @@ impl Controller {
             Cmd::CloseTabsToRight { group, tab } => self.close_tabs_to_right(group, tab),
             Cmd::CloseTabsToLeft { group, tab } => self.close_tabs_to_left(group, tab),
             Cmd::OpenTabMenu { tab, at } => {
-                self.tab_menu = Some(TabMenu { tab, at });
-                self.tab_menu_open = false;
-                self.picker_open = false;
-                self.saved_menu_open = false;
+                self.menus.tab_menu = Some(TabMenu { tab, at });
+                self.menus.tab_menu_open = false;
+                self.menus.picker_open = false;
+                self.menus.saved_menu_open = false;
             }
-            Cmd::CloseTabMenu => self.tab_menu = None,
+            Cmd::CloseTabMenu => self.menus.tab_menu = None,
             Cmd::BeginRename { group, tab } => {
-                self.tab_menu = None;
-                self.renaming = Some((group, tab));
+                self.menus.tab_menu = None;
+                self.menus.renaming = Some((group, tab));
             }
-            Cmd::CancelRename => self.renaming = None,
+            Cmd::CancelRename => self.menus.renaming = None,
             Cmd::RenameTab { group, tab, title } => self.rename_tab(group, tab, title),
             Cmd::SetPickerOpen(open) => self.set_picker_open(open),
             Cmd::TogglePicker => {
-                let open = !self.picker_open;
+                let open = !self.menus.picker_open;
                 self.set_picker_open(open);
             }
             Cmd::TogglePickerPick { hwnd } => self.toggle_picker_pick(hwnd),
             Cmd::MovePickerCursor { delta } => self.move_picker_cursor(delta),
             Cmd::TogglePickerCursor => self.toggle_picker_cursor(),
             Cmd::AddPicked => {
-                for hwnd in std::mem::take(&mut self.picker_picks) {
+                for hwnd in std::mem::take(&mut self.menus.picker_picks) {
                     self.add_window(hwnd);
                 }
             }
             Cmd::SetSavedMenu(open) => self.set_saved_menu(open),
             Cmd::ToggleSavedMenu => {
-                let open = !self.saved_menu_open;
+                let open = !self.menus.saved_menu_open;
                 self.set_saved_menu(open);
             }
             Cmd::BeginSaveSet => {
-                self.saved_menu_open = false;
-                self.saved_prompt = Some(SavedPrompt::Save);
+                self.menus.saved_menu_open = false;
+                self.menus.saved_prompt = Some(SavedPrompt::Save);
             }
             Cmd::BeginRenameSet { id } => {
                 if self.saved_sets.iter().any(|s| s.id == id) {
-                    self.saved_menu_open = false;
-                    self.saved_prompt = Some(SavedPrompt::Rename(id));
+                    self.menus.saved_menu_open = false;
+                    self.menus.saved_prompt = Some(SavedPrompt::Rename(id));
                 }
             }
-            Cmd::CancelSavedPrompt => self.saved_prompt = None,
+            Cmd::CancelSavedPrompt => self.menus.saved_prompt = None,
             Cmd::CommitSaveSet { name } => self.commit_save_set(name),
             Cmd::CommitRenameSet { id, name } => self.commit_rename_set(id, name),
             Cmd::RestoreSet { id } => self.restore_set(id),
@@ -151,7 +151,8 @@ impl Controller {
             }
             Cmd::BannerAction(action) => match action {
                 BannerAction::InstallUpdate => {
-                    if let crate::core::UpdateState::Available(version) = self.update.clone() {
+                    if let crate::core::UpdateState::Available(version) = self.updater.state.clone()
+                    {
                         self.install_available_update(version, cx);
                     }
                 }
@@ -168,10 +169,10 @@ impl Controller {
     }
 
     pub(super) fn close_other_dropdowns(&mut self) {
-        self.picker_open = false;
-        self.saved_menu_open = false;
-        self.tab_menu_open = false;
-        self.tab_menu_cursor = None;
-        self.tab_menu = None;
+        self.menus.picker_open = false;
+        self.menus.saved_menu_open = false;
+        self.menus.tab_menu_open = false;
+        self.menus.tab_menu_cursor = None;
+        self.menus.tab_menu = None;
     }
 }

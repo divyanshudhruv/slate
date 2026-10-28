@@ -62,15 +62,15 @@ impl Controller {
             .map(|group| group.tabs.len())
             .unwrap_or(0);
         if count == 0 {
-            self.tab_menu_cursor = None;
+            self.menus.tab_menu_cursor = None;
             return;
         }
-        let next = match self.tab_menu_cursor {
+        let next = match self.menus.tab_menu_cursor {
             Some(ix) => (ix as isize + delta).rem_euclid(count as isize) as usize,
             None if delta < 0 => count - 1,
             None => 0,
         };
-        self.tab_menu_cursor = Some(next);
+        self.menus.tab_menu_cursor = Some(next);
     }
 
     /// Selects the tab the all-tabs menu cursor sits on.
@@ -78,7 +78,7 @@ impl Controller {
         let Some(group) = self.active_group else {
             return;
         };
-        let Some(ix) = self.tab_menu_cursor else {
+        let Some(ix) = self.menus.tab_menu_cursor else {
             return;
         };
         let Some(tab) = self
@@ -90,8 +90,8 @@ impl Controller {
             return;
         };
         self.select_tab(group, tab);
-        self.tab_menu_open = false;
-        self.tab_menu_cursor = None;
+        self.menus.tab_menu_open = false;
+        self.menus.tab_menu_cursor = None;
     }
 
     pub(super) fn select_tab(&mut self, group: GroupId, tab: TabId) {
@@ -278,6 +278,6 @@ impl Controller {
         } else {
             self.rename_overrides.insert(hwnd, trimmed.to_string());
         }
-        self.renaming = None;
+        self.menus.renaming = None;
     }
 }

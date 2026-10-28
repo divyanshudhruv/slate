@@ -10,18 +10,11 @@ use crate::win::capture_window;
 impl Controller {
     /// True while anything is drawn over the member area, so members stay hidden.
     pub(super) fn overlaying(&self) -> bool {
-        self.menu_overlay() || self.hover_preview.is_some()
+        self.menus.escapable()
     }
 
     pub(super) fn menu_overlay(&self) -> bool {
-        self.overlay
-            || self.dialog.is_some()
-            || self.tab_menu_open
-            || self.picker_open
-            || self.saved_menu_open
-            || self.tab_menu.is_some()
-            || self.renaming.is_some()
-            || self.saved_prompt.is_some()
+        self.menus.dismissable()
     }
 
     pub(super) fn preview_hover(
@@ -34,9 +27,9 @@ impl Controller {
             return;
         }
         self.invalidate_info();
-        self.hover_tab = Some(tab);
+        self.menus.hover_tab = Some(tab);
         self.preview_gen = self.preview_gen.wrapping_add(1);
-        if self.hover_preview.is_some() {
+        if self.menus.hover_preview.is_some() {
             self.show_hover_preview(tab, anchor, cx);
             return;
         }
@@ -52,17 +45,17 @@ impl Controller {
     }
 
     pub(super) fn preview_unhover(&mut self, tab: TabId, cx: &mut Context<Self>) {
-        if self.hover_tab != Some(tab) {
+        if self.menus.hover_tab != Some(tab) {
             return;
         }
         self.invalidate_info();
-        self.hover_tab = None;
+        self.menus.hover_tab = None;
         self.preview_gen = self.preview_gen.wrapping_add(1);
-        if self.hover_preview.is_none() {
+        if self.menus.hover_preview.is_none() {
             return;
         }
         self.after_hover_delay(PREVIEW_LINGER_MS, cx, |c, cx| {
-            if !c.card_hovered {
+            if !c.menus.card_hovered {
                 c.hide_hover_preview();
                 c.sync_worker();
                 cx.notify();
@@ -72,13 +65,13 @@ impl Controller {
 
     pub(super) fn preview_card_hover(&mut self, hovered: bool, cx: &mut Context<Self>) {
         self.invalidate_info();
-        self.card_hovered = hovered;
+        self.menus.card_hovered = hovered;
         self.preview_gen = self.preview_gen.wrapping_add(1);
-        if hovered || self.hover_preview.is_none() || self.hover_tab.is_some() {
+        if hovered || self.menus.hover_preview.is_none() || self.menus.hover_tab.is_some() {
             return;
         }
         self.after_hover_delay(PREVIEW_LINGER_MS, cx, |c, cx| {
-            if !c.card_hovered && c.hover_tab.is_none() {
+            if !c.menus.card_hovered && c.menus.hover_tab.is_none() {
                 c.hide_hover_preview();
                 c.sync_worker();
                 cx.notify();
@@ -90,8 +83,8 @@ impl Controller {
         self.invalidate_info();
         self.settings.tabs.hover_preview = !self.settings.tabs.hover_preview;
         if !self.settings.tabs.hover_preview {
-            self.hover_tab = None;
-            self.card_hovered = false;
+            self.menus.hover_tab = None;
+            self.menus.card_hovered = false;
             self.preview_gen = self.preview_gen.wrapping_add(1);
             self.hide_hover_preview();
         }
@@ -134,7 +127,7 @@ impl Controller {
         let active = self.active_hwnd(group);
         let menu_open = self.menu_overlay();
         let cached = self.snapshots.get(&hwnd).cloned();
-        self.hover_preview = Some(HoverPreview {
+        self.menus.hover_preview = Some(HoverPreview {
             tab,
             anchor,
             image: cached,
@@ -157,7 +150,7 @@ impl Controller {
                     controller.snapshots.insert(hwnd, image.clone());
                 }
                 let fallback = controller.snapshots.get(&hwnd).cloned();
-                if let Some(preview) = controller.hover_preview.as_mut() {
+                if let Some(preview) = controller.menus.hover_preview.as_mut() {
                     preview.image = image.or(fallback);
                 }
                 controller.invalidate_info();
@@ -169,16 +162,16 @@ impl Controller {
 
     pub(super) fn hide_hover_preview(&mut self) {
         self.invalidate_info();
-        self.hover_preview = None;
-        self.card_hovered = false;
+        self.menus.hover_preview = None;
+        self.menus.card_hovered = false;
     }
 
     pub(super) fn dismiss_hover_preview(&mut self) {
-        if self.hover_preview.is_none() {
+        if self.menus.hover_preview.is_none() {
             return;
         }
-        self.hover_tab = None;
-        self.card_hovered = false;
+        self.menus.hover_tab = None;
+        self.menus.card_hovered = false;
         self.preview_gen = self.preview_gen.wrapping_add(1);
         self.hide_hover_preview();
     }

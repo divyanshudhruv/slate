@@ -13,7 +13,7 @@ impl Controller {
             self.windows = enumerate_windows();
             self.refresh_saved_avail();
         }
-        self.saved_menu_open = open;
+        self.menus.saved_menu_open = open;
     }
 
     pub(super) fn refresh_saved_avail(&mut self) {
@@ -63,7 +63,7 @@ impl Controller {
     }
 
     pub(super) fn commit_save_set(&mut self, name: String) {
-        self.saved_prompt = None;
+        self.menus.saved_prompt = None;
         let name = name.trim().to_string();
         if name.is_empty() {
             return;
@@ -83,7 +83,7 @@ impl Controller {
     }
 
     pub(super) fn commit_rename_set(&mut self, id: u64, name: String) {
-        self.saved_prompt = None;
+        self.menus.saved_prompt = None;
         let name = name.trim().to_string();
         if name.is_empty() {
             return;
@@ -108,7 +108,7 @@ impl Controller {
         };
         self.windows = enumerate_windows();
         self.restore_tabs(&set.tabs);
-        self.saved_menu_open = false;
+        self.menus.saved_menu_open = false;
     }
 
     pub(super) fn restore_tabs(&mut self, tabs: &[config::SavedTab]) {

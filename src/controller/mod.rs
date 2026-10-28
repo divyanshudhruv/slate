@@ -39,9 +39,6 @@ pub struct Controller {
     styling: HashMap<isize, StylingState>,
     worker: HostWorker,
     janitor: Janitor,
-    banner: Option<BannerView>,
-    banner_id: u64,
-    update_banner_hidden: Option<String>,
     keybind_error: Option<String>,
     picking: bool,
     hovered: Option<isize>,
@@ -50,6 +47,30 @@ pub struct Controller {
     highlight: Option<Highlight>,
     pub settings: config::Settings,
     icons: HashMap<isize, Option<Arc<RenderImage>>>,
+    menus: Menus,
+    session_sig: u64,
+    saved_sets: Vec<config::SavedSet>,
+    saved_avail: HashMap<u64, usize>,
+    rename_overrides: HashMap<isize, String>,
+    tab_colors: HashMap<isize, usize>,
+    preview_gen: u64,
+    snapshots: HashMap<isize, Arc<RenderImage>>,
+    shortcuts: Option<ShortcutCapture>,
+    tray: Option<crate::win::TrayIcon>,
+    drag: Option<isize>,
+    drag_active: bool,
+    updater: Updater,
+    keybind_draft: Vec<Option<crate::core::keys::Chord>>,
+    info_cache: RefCell<Option<Arc<HostInfo>>>,
+    index_cache: RefCell<Option<Index>>,
+    save_error: RefCell<Option<String>>,
+    recovered: Vec<isize>,
+    _pump: Option<WinEventPump>,
+}
+
+/// Every surface that can be open above the tabs, plus each menu's keyboard cursor.
+#[derive(Default)]
+struct Menus {
     overlay: bool,
     tab_menu_open: bool,
     tab_menu_cursor: Option<usize>,
@@ -57,34 +78,43 @@ pub struct Controller {
     picker_rows: Vec<PickerRow>,
     picker_picks: Vec<isize>,
     picker_cursor: Option<usize>,
-    session_sig: u64,
-    saved_sets: Vec<config::SavedSet>,
-    saved_avail: HashMap<u64, usize>,
     saved_menu_open: bool,
     saved_prompt: Option<SavedPrompt>,
     tab_menu: Option<TabMenu>,
     renaming: Option<(GroupId, TabId)>,
-    rename_overrides: HashMap<isize, String>,
-    tab_colors: HashMap<isize, usize>,
     hover_preview: Option<HoverPreview>,
     hover_tab: Option<TabId>,
     card_hovered: bool,
-    preview_gen: u64,
-    snapshots: HashMap<isize, Arc<RenderImage>>,
-    shortcuts: Option<ShortcutCapture>,
-    tray: Option<crate::win::TrayIcon>,
-    drag: Option<isize>,
-    drag_active: bool,
-    update: UpdateState,
-    /// Verified build waiting for the Ready banner's restart.
-    pending_install: Option<(String, std::path::PathBuf)>,
     dialog: Option<Dialog>,
-    keybind_draft: Vec<Option<crate::core::keys::Chord>>,
-    info_cache: RefCell<Option<Arc<HostInfo>>>,
-    index_cache: RefCell<Option<Index>>,
-    save_error: RefCell<Option<String>>,
-    recovered: Vec<isize>,
-    _pump: Option<WinEventPump>,
+}
+
+impl Menus {
+    /// A click anywhere in the body closes these; a rename or a prompt keeps its own focus.
+    fn dismissable(&self) -> bool {
+        self.overlay
+            || self.tab_menu_open
+            || self.picker_open
+            || self.saved_menu_open
+            || self.tab_menu.is_some()
+            || self.dialog.is_some()
+    }
+
+    fn escapable(&self) -> bool {
+        self.dismissable()
+            || self.renaming.is_some()
+            || self.saved_prompt.is_some()
+            || self.hover_preview.is_some()
+    }
+}
+
+/// The update check, the verified build waiting for a restart, and the banner that announces it.
+#[derive(Default)]
+struct Updater {
+    state: UpdateState,
+    pending_install: Option<(String, std::path::PathBuf)>,
+    banner: Option<BannerView>,
+    banner_id: u64,
+    banner_hidden: Option<String>,
 }
 
 #[derive(Default)]
@@ -122,49 +152,34 @@ impl Controller {
             highlight: None,
             settings,
             icons: HashMap::new(),
-            overlay: false,
-            tab_menu_open: false,
-            tab_menu_cursor: None,
-            picker_open: false,
-            picker_rows: Vec::new(),
-            picker_picks: Vec::new(),
-            picker_cursor: None,
+            menus: Menus::default(),
             session_sig: 0,
             saved_sets: config::load_sets().sets,
             saved_avail: HashMap::new(),
-            saved_menu_open: false,
-            saved_prompt: None,
-            tab_menu: None,
-            renaming: None,
             rename_overrides: HashMap::new(),
             tab_colors: HashMap::new(),
-            hover_preview: None,
-            hover_tab: None,
-            card_hovered: false,
             preview_gen: 0,
             snapshots: HashMap::new(),
             shortcuts: ShortcutCapture::install(),
             tray: crate::win::TrayIcon::start(),
             drag: None,
             drag_active: false,
-            dialog: None,
-            update,
-            pending_install: None,
+            updater: Updater {
+                state: update,
+                ..Updater::default()
+            },
             keybind_draft: Vec::new(),
             info_cache: RefCell::new(None),
             index_cache: RefCell::new(None),
             save_error: RefCell::new(None),
             _pump: WinEventPump::install(),
-            banner: None,
-            banner_id: 0,
-            update_banner_hidden: None,
             keybind_error: None,
         };
         Self::start_event_pump(cx);
         controller.apply_theme(cx);
         dialog::push_shortcuts(&controller.settings);
         if !controller.recovered.is_empty() {
-            controller.dialog = Some(Dialog::Recovery);
+            controller.menus.dialog = Some(Dialog::Recovery);
         }
         if stale_schema {
             controller.note_error(
@@ -307,18 +322,7 @@ impl Controller {
             self.sync_worker();
             cx.notify();
         }
-        changed
-            || self.picking
-            || self.drag.is_some()
-            || self.hover_preview.is_some()
-            || self.overlay
-            || self.tab_menu_open
-            || self.picker_open
-            || self.saved_menu_open
-            || self.tab_menu.is_some()
-            || self.renaming.is_some()
-            || self.saved_prompt.is_some()
-            || self.dialog.is_some()
+        changed || self.picking || self.drag.is_some() || self.menus.escapable()
     }
 
     pub fn host_info(&self) -> Arc<HostInfo> {
@@ -343,7 +347,7 @@ impl Controller {
         };
         let version_label =
             SharedString::from(format!("Slate v{}", crate::core::update::CURRENT_VERSION));
-        let update_label = match &self.update {
+        let update_label = match &self.updater.state {
             UpdateState::Checking => SharedString::from("Checking for updates\u{2026}"),
             UpdateState::Available(version) => {
                 SharedString::from(format!("Update available: v{version}"))
@@ -389,14 +393,14 @@ impl Controller {
             hover_preview_enabled: self.settings.tabs.hover_preview,
             theme: SharedString::from(self.settings.theme.as_str()),
             restore_session: self.settings.restore_session,
-            overlay: self.overlay,
-            tab_menu_open: self.tab_menu_open,
-            tab_menu_cursor: self.tab_menu_cursor,
-            picker_open: self.picker_open,
-            picker_rows: self.picker_rows.clone(),
-            picker_picks: self.picker_picks.clone(),
-            picker_cursor: self.picker_cursor,
-            saved_menu_open: self.saved_menu_open,
+            overlay: self.menus.overlay,
+            tab_menu_open: self.menus.tab_menu_open,
+            tab_menu_cursor: self.menus.tab_menu_cursor,
+            picker_open: self.menus.picker_open,
+            picker_rows: self.menus.picker_rows.clone(),
+            picker_picks: self.menus.picker_picks.clone(),
+            picker_cursor: self.menus.picker_cursor,
+            saved_menu_open: self.menus.saved_menu_open,
             saved_sets: self
                 .saved_sets
                 .iter()
@@ -410,17 +414,17 @@ impl Controller {
                     }
                 })
                 .collect(),
-            saved_prompt: self.saved_prompt,
-            tab_menu: self.tab_menu.clone(),
-            renaming: self.renaming,
+            saved_prompt: self.menus.saved_prompt,
+            tab_menu: self.menus.tab_menu.clone(),
+            renaming: self.menus.renaming,
             picking: self.picking,
-            hover_preview: self.hover_preview.clone(),
+            hover_preview: self.menus.hover_preview.clone(),
             show_tab_bar: self.settings.tabs.show_bar,
-            update: self.update.clone(),
-            update_banner_hidden: self.update_banner_hidden.clone(),
-            banner: self.banner.clone(),
+            update: self.updater.state.clone(),
+            update_banner_hidden: self.updater.banner_hidden.clone(),
+            banner: self.updater.banner.clone(),
             keybind_error: self.keybind_error.clone().map(SharedString::from),
-            dialog: self.dialog,
+            dialog: self.menus.dialog,
             keybinds: self.settings.keybinds.clone(),
             caption,
             version_label,
@@ -445,14 +449,14 @@ impl Controller {
         self.groups = GroupSet::new();
         self.active_group = None;
         self.host_hwnd = None;
-        self.overlay = false;
-        self.tab_menu_open = false;
-        self.tab_menu_cursor = None;
-        self.picker_open = false;
-        self.picker_rows.clear();
-        self.picker_cursor = None;
-        self.tab_menu = None;
-        self.renaming = None;
+        self.menus.overlay = false;
+        self.menus.tab_menu_open = false;
+        self.menus.tab_menu_cursor = None;
+        self.menus.picker_open = false;
+        self.menus.picker_rows.clear();
+        self.menus.picker_cursor = None;
+        self.menus.tab_menu = None;
+        self.menus.renaming = None;
         self.rename_overrides.clear();
         self.drag = None;
         self.drag_active = false;

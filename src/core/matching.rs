@@ -66,7 +66,11 @@ fn near(a: Option<[i32; 4]>, b: Option<[i32; 4]>) -> bool {
     let (Some(a), Some(b)) = (a, b) else {
         return false;
     };
-    a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() <= NEAR)
+    // Widened, so two distant rects cannot overflow the subtraction.
+    a.iter().zip(b.iter()).all(|(x, y)| {
+        let gap = i64::from(*x) - i64::from(*y);
+        gap.abs() <= i64::from(NEAR)
+    })
 }
 
 #[cfg(test)]

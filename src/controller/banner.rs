@@ -15,9 +15,9 @@ impl Controller {
         ttl: Option<Duration>,
         cx: &mut Context<Self>,
     ) {
-        self.banner_id = self.banner_id.wrapping_add(1);
-        let id = self.banner_id;
-        self.banner = Some(BannerView { id, kind });
+        self.updater.banner_id = self.updater.banner_id.wrapping_add(1);
+        let id = self.updater.banner_id;
+        self.updater.banner = Some(BannerView { id, kind });
         self.invalidate_info();
         cx.notify();
         let Some(ttl) = ttl else {
@@ -28,11 +28,12 @@ impl Controller {
             this.update(cx, |controller, cx| {
                 // Only clear the banner this timer was started for.
                 if controller
+                    .updater
                     .banner
                     .as_ref()
                     .is_some_and(|banner| banner.id == id)
                 {
-                    controller.banner = None;
+                    controller.updater.banner = None;
                     controller.invalidate_info();
                     cx.notify();
                 }
@@ -60,11 +61,11 @@ impl Controller {
     /// The close button on a message banner.
     pub(super) fn dismiss_banner(&mut self, cx: &mut Context<Self>) {
         let is_message = matches!(
-            self.banner.as_ref().map(|banner| &banner.kind),
+            self.updater.banner.as_ref().map(|banner| &banner.kind),
             Some(BannerKind::Message { .. })
         );
         if is_message {
-            self.banner = None;
+            self.updater.banner = None;
         }
         self.invalidate_info();
         cx.notify();
@@ -72,8 +73,8 @@ impl Controller {
 
     /// Later on an update banner: hidden until a newer version shows up.
     pub(super) fn dismiss_update_banner(&mut self, cx: &mut Context<Self>) {
-        if let UpdateState::Available(version) = &self.update {
-            self.update_banner_hidden = Some(version.clone());
+        if let UpdateState::Available(version) = &self.updater.state {
+            self.updater.banner_hidden = Some(version.clone());
         }
         self.invalidate_info();
         cx.notify();

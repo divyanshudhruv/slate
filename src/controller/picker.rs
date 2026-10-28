@@ -5,8 +5,8 @@ use std::collections::HashSet;
 
 impl Controller {
     pub(super) fn set_picker_open(&mut self, open: bool) {
-        self.picker_picks.clear();
-        self.picker_cursor = None;
+        self.menus.picker_picks.clear();
+        self.menus.picker_cursor = None;
         if open {
             self.close_other_dropdowns();
             self.windows = enumerate_windows();
@@ -15,7 +15,7 @@ impl Controller {
             let hosted: HashSet<isize> = self.styling.keys().copied().collect();
             self.icons.retain(|hwnd, _| hosted.contains(hwnd));
         }
-        self.picker_open = open;
+        self.menus.picker_open = open;
     }
 
     pub(super) fn refresh_picker(&mut self) {
@@ -67,26 +67,28 @@ impl Controller {
             })
             .collect();
         rows.sort_by_cached_key(|row| (row.reason.is_some(), row.title.to_lowercase()));
-        self.picker_rows = rows;
+        self.menus.picker_rows = rows;
         if self
+            .menus
             .picker_cursor
-            .is_some_and(|ix| ix >= self.picker_rows.len())
+            .is_some_and(|ix| ix >= self.menus.picker_rows.len())
         {
-            self.picker_cursor = None;
+            self.menus.picker_cursor = None;
         }
     }
 
     pub(super) fn toggle_picker_pick(&mut self, hwnd: isize) {
-        if let Some(ix) = self.picker_picks.iter().position(|h| *h == hwnd) {
-            self.picker_picks.remove(ix);
-        } else if self.picker_rows.iter().any(|row| row.hwnd == hwnd) {
-            self.picker_picks.push(hwnd);
+        if let Some(ix) = self.menus.picker_picks.iter().position(|h| *h == hwnd) {
+            self.menus.picker_picks.remove(ix);
+        } else if self.menus.picker_rows.iter().any(|row| row.hwnd == hwnd) {
+            self.menus.picker_picks.push(hwnd);
         }
     }
 
     /// Steps the highlight along the pickable rows, wrapping at both ends.
     pub(super) fn move_picker_cursor(&mut self, delta: isize) {
         let open: Vec<usize> = self
+            .menus
             .picker_rows
             .iter()
             .enumerate()
@@ -94,10 +96,11 @@ impl Controller {
             .map(|(ix, _)| ix)
             .collect();
         if open.is_empty() {
-            self.picker_cursor = None;
+            self.menus.picker_cursor = None;
             return;
         }
         let next = match self
+            .menus
             .picker_cursor
             .and_then(|ix| open.iter().position(|o| *o == ix))
         {
@@ -109,11 +112,15 @@ impl Controller {
             None if delta < 0 => open[open.len() - 1],
             None => open[0],
         };
-        self.picker_cursor = Some(next);
+        self.menus.picker_cursor = Some(next);
     }
 
     pub(super) fn toggle_picker_cursor(&mut self) {
-        let Some(row) = self.picker_cursor.and_then(|ix| self.picker_rows.get(ix)) else {
+        let Some(row) = self
+            .menus
+            .picker_cursor
+            .and_then(|ix| self.menus.picker_rows.get(ix))
+        else {
             return;
         };
         if row.reason.is_some() {

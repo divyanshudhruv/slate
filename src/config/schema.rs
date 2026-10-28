@@ -14,7 +14,7 @@ pub struct Settings {
     pub accent: Accent,
     #[serde(default = "yes")]
     pub restore_session: bool,
-    #[serde(default = "preview_delay_default")]
+    #[serde(default = "preview_delay_default", deserialize_with = "preview_delay")]
     pub preview_delay_ms: u64,
     #[serde(default)]
     pub tabs: Tabs,
@@ -73,15 +73,18 @@ impl ThemeMode {
 impl<'de> Deserialize<'de> for ThemeMode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let text = String::deserialize(deserializer)?;
-        Ok(match text.to_ascii_lowercase().as_str() {
-            "light" => Self::Light,
-            "dark" => Self::Dark,
-            "system" => Self::System,
-            other => {
-                tracing::warn!("unknown theme '{other}', using system");
-                Self::System
-            }
-        })
+        Ok(crate::core::from_name(
+            &text,
+            &[
+                ("light", Self::Light),
+                ("dark", Self::Dark),
+                ("system", Self::System),
+            ],
+        )
+        .unwrap_or_else(|| {
+            tracing::warn!("unknown theme '{text}', using system");
+            Self::System
+        }))
     }
 }
 
@@ -327,6 +330,11 @@ fn schema_version() -> u32 {
 }
 fn preview_delay_default() -> u64 {
     crate::timings::DEFAULT_PREVIEW_DELAY_MS
+}
+
+/// Bounds the preview delay where it is read, so file and default agree on one limit.
+fn preview_delay<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    Ok(u64::deserialize(deserializer)?.min(crate::timings::MAX_PREVIEW_DELAY_MS))
 }
 fn yes() -> bool {
     true

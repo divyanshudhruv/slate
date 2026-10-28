@@ -70,7 +70,7 @@ impl Controller {
         self.snapshots.remove(&hwnd);
         self.rename_overrides.remove(&hwnd);
         self.tab_colors.remove(&hwnd);
-        if let Some(tab) = self.hover_preview.as_ref().map(|p| p.tab) {
+        if let Some(tab) = self.menus.hover_preview.as_ref().map(|p| p.tab) {
             if self.active_group.and_then(|g| self.hwnd_of_tab(g, tab)) == Some(hwnd) {
                 self.hide_hover_preview();
             }
@@ -78,7 +78,7 @@ impl Controller {
         self.windows.retain(|w| w.hwnd != hwnd);
         self.groups.window_destroyed(hwnd);
         self.reconcile_active_group();
-        if self.picker_open {
+        if self.menus.picker_open {
             self.refresh_picker();
         }
     }
@@ -91,7 +91,7 @@ impl Controller {
         let host = self.host_hwnd.unwrap_or(0);
         if self.menu_overlay() {
             self.hide_hover_preview();
-        } else if let Some(tab) = self.hover_preview.as_ref().map(|p| p.tab) {
+        } else if let Some(tab) = self.menus.hover_preview.as_ref().map(|p| p.tab) {
             let hosted = self
                 .active_group
                 .and_then(|g| self.hwnd_of_tab(g, tab))
