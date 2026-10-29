@@ -723,8 +723,7 @@ fn menu_divider(index: usize, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// One row of the tab context menu, built from the controller's list so the key cursor and the
-/// painted rows stay in step.
+/// One row of the tab context menu, built from the controller's list so the key cursor and the painted rows stay in step.
 fn ctx_menu_row(
     item: &ContextMenuItem,
     highlighted: bool,

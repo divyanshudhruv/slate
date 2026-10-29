@@ -152,17 +152,14 @@
 
 ## Install
 
-Download the asset that matches your CPU from the
-[latest release](https://github.com/divyanshudhruv/slate/releases/latest) and run
-it. There is no installer and nothing else to install.
+Download the asset that matches your CPU from the [latest release](https://github.com/divyanshudhruv/slate/releases/latest) and run it. There is no installer and nothing else to install.
 
 | Asset                    | For                                         |
 | ------------------------ | ------------------------------------------- |
 | `slate-vX.Y.Z-x64.exe`   | Intel / AMD 64-bit PCs (most machines)      |
 | `slate-vX.Y.Z-arm64.exe` | ARM64 Windows (Surface, Snapdragon laptops) |
 
-Releases are unsigned, so SmartScreen may warn on the first launch. To check a
-download, compare it against the published `SHA256SUMS`:
+Releases are unsigned, so SmartScreen may warn on the first launch. To check a download, compare it against the published `SHA256SUMS`:
 
 ```powershell
 Get-FileHash .\slate-vX.Y.Z-x64.exe -Algorithm SHA256  # match the file you downloaded
@@ -172,10 +169,7 @@ Upgrading from an older build? See [MIGRATION.md](MIGRATION.md).
 
 ## Build from source
 
-You need Rust with the MSVC target and the Windows SDK. The exact toolchain
-and target list are pinned in `rust-toolchain.toml`, which rustup applies
-automatically (the `aarch64` target there is only for the ARM64 release build
-in CI; local `cargo build --release` produces the x64 exe).
+You need Rust with the MSVC target and the Windows SDK. The exact toolchain and target list are pinned in `rust-toolchain.toml`, which rustup applies automatically (the `aarch64` target there is only for the ARM64 release build in CI; local `cargo build --release` produces the x64 exe).
 
 ```powershell
 cargo build --release
@@ -184,8 +178,7 @@ cargo build --release
 > [!IMPORTANT]
 > The full dependency tree is memory hungry to compile. If cargo fails with `os error 1455` (a paging or commit-limit failure), rerun it with `-j 1` to build one crate at a time.
 
-The binary lands in `target\release\slate.exe`. For the development workflow,
-see [CONTRIBUTING.md](CONTRIBUTING.md).
+The binary lands in `target\release\slate.exe`. For the development workflow, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Usage
 
@@ -218,24 +211,18 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 | `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap staging |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |
 
-Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe
-to keep settings, sets, session, updates, and logs in `data\` beside it.
+Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe to keep settings, sets, session, updates, and logs in `data\` beside it.
 
-Coming from the old `%USERPROFILE%\.burntfern\` layout? It is migrated
-automatically on first run - see [MIGRATION.md](MIGRATION.md).
+Coming from the old `%USERPROFILE%\.burntfern\` layout? It is migrated automatically on first run - see [MIGRATION.md](MIGRATION.md).
 
 ## Limitations
 
-**`1. Windows only`** - Slate relies on Win32 window ownership, DWM frame
-control, and GDI icon extraction.
+**`1. Windows only`** - Slate relies on Win32 window ownership, DWM frame control, and GDI icon extraction.
 
-**`2. Owned windows draw above the host`** - While a Slate menu or dialog is
-open, it covers the active member. Tooltips and other overlays that reach
-outside the title bar have the same problem.
+**`2. Owned windows draw above the host`** - While a Slate menu or dialog is open, it covers the active member. Tooltips and other overlays that reach outside the title bar have the same problem.
 
 **`3. Accent is config-file only`** - the accent hue lives in `settings.json`.
-Change it there, then pick **Reload settings** in the Slate menu; there is no
-accent picker in the UI.
+Change it there, then pick **Reload settings** in the Slate menu; there is no accent picker in the UI.
 
 ## Star History
 

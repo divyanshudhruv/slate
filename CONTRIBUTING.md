@@ -1,7 +1,6 @@
 # Contributing
 
-Thanks for helping with Slate. This project is Windows-only and built with the
-Rust MSVC toolchain.
+Thanks for helping with Slate. This project is Windows-only and built with the Rust MSVC toolchain.
 
 ## Prerequisites
 
@@ -28,12 +27,7 @@ cargo build --locked
 cargo test --locked
 ```
 
-These are the steps `.github/workflows/ci.yml` runs, so a locally clean run should
-be a green PR. `cargo clippy --locked --all-targets` must be warning-free. CI skips
-the separate `cargo build`, because clippy and test already build the binary. The
-suite covers `core`, `config`, the pure helpers in `ui` and `win`, and the
-comment-style lint in `tests/`; the interactive UI and Win32 paths are verified by
-running the app.
+These are the steps `.github/workflows/ci.yml` runs, so a locally clean run should be a green PR. `cargo clippy --locked --all-targets` must be warning-free. CI skips the separate `cargo build`, because clippy and test already build the binary. The suite covers `core`, `config`, the pure helpers in `ui` and `win`, and the comment-style lint in `tests/`; the interactive UI and Win32 paths are verified by running the app.
 
 ## Commit messages
 
@@ -43,32 +37,22 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 type(scope): lowercase imperative summary
 ```
 
-Common types: `feat`, `fix`, `refactor`, `perf`, `docs`, `build`, `ci`, `chore`,
-and `init` (reserved for the first release commit). Keep the subject on one line.
+Common types: `feat`, `fix`, `refactor`, `perf`, `docs`, `build`, `ci`, `chore`, and `init` (reserved for the first release commit). Keep the subject on one line.
 Explain *why* in the body only when it is not obvious.
 
 ## Branch naming
 
-`<type>/<short-description>`, for example `fix/tab-underflow` or
-`refactor/split-controller`.
+`<type>/<short-description>`, for example `fix/tab-underflow` or `refactor/split-controller`.
 
 ## Which branch to target
 
-`main` is the release branch: it moves only through release-please and the
-occasional `development` -> `main` PR, and it is protected. Open your PR
-against **`development`**, and branch from the tip of `development`, not from
-`main`.
+`main` is the release branch: it moves only through release-please and the occasional `development` -> `main` PR, and it is protected. Open your PR against **`development`**, and branch from the tip of `development`, not from `main`.
 
-Fork PRs are welcome and need no secret. CI runs on a PR into `development` or
-`main`, and on a push to `development`. GitHub does not let fork PRs write
-caches - that is expected, not a failure.
+Fork PRs are welcome and need no secret. CI runs on a PR into `development` or `main`, and on a push to `development`. GitHub does not let fork PRs write caches - that is expected, not a failure.
 
 ## Architecture
 
-Data flows one way: **UI -> command -> controller -> Win32 -> core state**. The UI
-never calls Win32 directly; it dispatches a `Cmd` and re-renders from the
-snapshot the controller publishes. See `src/controller/` for the command
-handling and `src/win/` for the platform layer.
+Data flows one way: **UI -> command -> controller -> Win32 -> core state**. The UI never calls Win32 directly; it dispatches a `Cmd` and re-renders from the snapshot the controller publishes. See `src/controller/` for the command handling and `src/win/` for the platform layer.
 
 ## File layout
 

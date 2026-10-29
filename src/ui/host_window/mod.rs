@@ -87,8 +87,7 @@ pub struct HostWindow {
     saved_field: Option<Entity<TextInput>>,
     saved_primed: Option<SavedPrompt>,
     tab_scroll: ScrollHandle,
-    /// Held by the content root. A mouse press parks focus here, so key events reach the menus
-    /// even when the click landed on a plain row or tab that cannot take focus itself.
+    /// Held by the content root. A mouse press parks focus here, so key events reach the menus even when the click landed on a plain row or tab that cannot take focus itself.
     focus: FocusHandle,
     _observe_controller: Subscription,
 }
