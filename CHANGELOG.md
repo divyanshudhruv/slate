@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.1](https://github.com/divyanshudhruv/slate/compare/v0.5.0...v0.5.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **update:** replace the batch swap helper with --swap-helper ([d50db61](https://github.com/divyanshudhruv/slate/commit/d50db61abce1c7fb87a0c2bf356efd4aaee16b90))
+* **win:** harden recovery, hook lifetime, and pick frame ([1f39d58](https://github.com/divyanshudhruv/slate/commit/1f39d58f81f48c430e03770fbea8c6a02d190779))
+
+
+### Refactoring
+
+* **install:** remove the start-menu shortcut ([402fe2e](https://github.com/divyanshudhruv/slate/commit/402fe2e93192bd22cdeb50fb8de7910529806bfc))
+
+
+### Documentation
+
+* **readme:** unwrap every sentence to one line ([138ac04](https://github.com/divyanshudhruv/slate/commit/138ac04dd4f74a128c8938c3dc060459c9970c46))
+
 ## [0.5.0](https://github.com/divyanshudhruv/slate/compare/v0.4.0...v0.5.0) (2026-10-28)
 
 
