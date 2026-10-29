@@ -45,6 +45,7 @@ pub struct Controller {
     pick_gen: u64,
     capture: Option<KeyboardCapture>,
     highlight: Option<Highlight>,
+    highlight_color: u32,
     pub settings: config::Settings,
     icons: HashMap<isize, Option<Arc<RenderImage>>>,
     menus: Menus,
@@ -149,6 +150,7 @@ impl Controller {
             pick_gen: 0,
             capture: None,
             highlight: None,
+            highlight_color: Highlight::DEFAULT_COLOR,
             settings,
             icons: HashMap::new(),
             menus: Menus::default(),
@@ -159,7 +161,7 @@ impl Controller {
             tab_colors: HashMap::new(),
             preview_gen: 0,
             snapshots: HashMap::new(),
-            shortcuts: ShortcutCapture::install(),
+            shortcuts: None,
             tray: crate::win::TrayIcon::start(),
             drag: None,
             drag_active: false,
@@ -224,18 +226,11 @@ impl Controller {
                     crate::win::shell::info_message(
                         "Slate moved",
                         &format!(
-                            "Slate now runs from {}. A shortcut was added to the Start menu.",
+                            "Slate now runs from {}.",
                             crate::config::paths::install_dir().display()
                         ),
                     );
                     return Some(0);
-                }
-                if !crate::win::shell_link::start_menu_shortcut_exists() {
-                    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(
-                        std::path::Path::new(&exe),
-                    ) {
-                        tracing::warn!("start menu shortcut: {err}");
-                    }
                 }
                 config::save_install(&config::InstallRecord {
                     path: exe,

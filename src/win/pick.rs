@@ -66,12 +66,16 @@ impl KeyboardCapture {
     pub fn install() -> Option<Self> {
         TAB_PENDING.store(false, Ordering::SeqCst);
         ESCAPE_PENDING.store(false, Ordering::SeqCst);
-        let hook =
-            unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), None, 0) }.ok()?;
-        Some(Self {
-            hook,
-            started: Instant::now(),
-        })
+        match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), None, 0) } {
+            Ok(hook) => Some(Self {
+                hook,
+                started: Instant::now(),
+            }),
+            Err(err) => {
+                tracing::warn!("pick: the keyboard hook did not install: {err}");
+                None
+            }
+        }
     }
 
     pub fn drain(&self) -> Vec<PickKey> {

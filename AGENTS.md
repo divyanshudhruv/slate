@@ -27,6 +27,7 @@ cargo build --locked
 - Don't add deps without asking. Prefer `ely_gpui_component` primitives.
 - Don't vendor/patch `ely_gpui_component` (git dep pinned by rev).
 - Use `-` not em dashes, `->` not arrows in docs/comments.
+- Keep one sentence per line in docs and comments. Never hard-wrap prose, and use `//`/`///` with no `/* */` blocks.
 - Conventional Commits. Only `feat`, `fix`, or a breaking change cut a release (via release-please on `main`). Version lives in `Cargo.toml`.
 - Don't commit unless asked.
 
@@ -34,3 +35,6 @@ cargo build --locked
 - Windows only. Uses Win32 window ownership, DWM frame control, GDI icon extraction.
 - Elevated windows only hosted if Slate is elevated. Slate never launches apps, only hosts running ones.
 - Hosted windows draw above the host, so Slate menus can be covered by the active member.
+- Crash recovery is deferred: `Janitor::persist` writes a signed payload while members are hosted, and `sweep_stale` replays it at the next start. There is no child process.
+- `slate.exe` has one hidden mode, `--swap-helper` (see `src/win/update.rs`). `src/main.rs` must return from it before `win::keys::install()` and `controller::startup()` so the helper never installs hooks or runs the install plan.
+- The global shortcut hook is installed only while a member is hosted (`Controller::sync_worker`), not at startup.

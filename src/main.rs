@@ -24,13 +24,13 @@ fn main() {
     crate::config::paths::ensure_dirs();
     logging::init();
     let args: Vec<String> = std::env::args().collect();
-    if let Some(i) = args.iter().position(|a| a == "--janitor") {
-        let path = args.get(i + 1).cloned().unwrap_or_default();
-        let pid = args.get(i + 2).and_then(|s| s.parse().ok()).unwrap_or(0);
-        win::janitor::run(std::path::PathBuf::from(path), pid);
+    if let Some(i) = args.iter().position(|a| a == "--swap-helper") {
+        if let Some(request) = win::update::parse_swap_args(&args[i + 1..]) {
+            win::update::run_swap_helper(request);
+        }
         return;
     }
-    // The janitor helper must not install the global keyboard hook.
+    // The swap helper must return before this, so it never installs the layout hooks or runs startup.
     win::keys::install();
     if let Some(code) = controller::startup() {
         std::process::exit(code);

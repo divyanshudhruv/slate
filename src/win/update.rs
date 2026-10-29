@@ -6,7 +6,7 @@ use std::process::Command;
 
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
 use crate::config;
@@ -164,9 +164,6 @@ pub fn bootstrap(source: &str) -> Result<(), String> {
         restore_backup(&backup, &canonical);
         return Err("failed to write install record".to_string());
     }
-    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
-        warn!("start menu shortcut: {err}");
-    }
     info!("bootstrap complete version {version}");
     Ok(())
 }
@@ -199,9 +196,6 @@ pub fn relocate(source: &str) -> Result<(), String> {
         pid: 0,
     }) {
         return Err("failed to write install record".to_string());
-    }
-    if let Err(err) = crate::win::shell_link::ensure_start_menu_shortcut(&canonical) {
-        warn!("start menu shortcut: {err}");
     }
     Command::new(&canonical)
         .creation_flags(CREATE_NO_WINDOW.0)
@@ -444,79 +438,96 @@ fn file_hash(path: &Path) -> Result<String, String> {
     Ok(hex::encode(result))
 }
 
-fn cmd_exe() -> std::path::PathBuf {
-    let shell = std::env::var_os("SystemRoot")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("C:\\Windows"))
-        .join("System32")
-        .join("cmd.exe");
-    if shell.is_file() {
-        return shell;
-    }
-    std::env::var_os("ComSpec")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("cmd.exe"))
+/// How the swap helper was addressed on the command line.
+pub struct SwapRequest {
+    pub pid: u32,
+    pub target: PathBuf,
+    pub staged: PathBuf,
 }
 
+/// Reads `<pid> <target> <staged>`; anything malformed means the helper does nothing.
+pub fn parse_swap_args(args: &[String]) -> Option<SwapRequest> {
+    Some(SwapRequest {
+        pid: args.first()?.parse().ok()?,
+        target: PathBuf::from(args.get(1)?),
+        staged: PathBuf::from(args.get(2)?),
+    })
+}
+
+/// Hands the verified download to a helper copy of this exe, which swaps it in once this process exits.
 pub fn spawn_swap_helper(pid: u32, target: &Path, staged: &Path) -> Result<(), String> {
-    let dir = config::staging_updates_dir();
-    let name = swap_helper_name(pid);
-    std::fs::write(dir.join(&name), helper_script(pid, target, staged))
-        .map_err(|err| format!("helper: {err}"))?;
-    Command::new(cmd_exe())
-        .current_dir(&dir)
-        .args(["/c"])
-        .arg(&name)
+    let exe = std::env::current_exe().map_err(|err| format!("current exe: {err}"))?;
+    Command::new(exe)
+        .arg("--swap-helper")
+        .arg(pid.to_string())
+        .arg(target)
+        .arg(staged)
         .creation_flags(CREATE_NO_WINDOW.0)
         .spawn()
         .map_err(|err| format!("helper: {err}"))?;
     Ok(())
 }
 
-fn swap_helper_name(pid: u32) -> String {
-    format!("slate-swap-{pid}.bat")
+/// The helper process: wait for the old build to exit, swap, relaunch.
+pub fn run_swap_helper(request: SwapRequest) {
+    wait_for_exit(request.pid);
+    swap_into_place(&request.target, &request.staged);
+    launch(&request.target, &request.staged);
 }
 
-fn batch_arg(path: &Path) -> String {
-    format!("\"{}\"", path.to_string_lossy().replace('%', "%%"))
+/// Bounded, so a build that ignores the request to close still gets replaced.
+fn wait_for_exit(pid: u32) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
+
+    if pid == 0 {
+        return;
+    }
+    // SAFETY: the handle is closed before returning, and the pid came from our own spawn.
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else {
+            return;
+        };
+        let timeout = crate::timings::SWAP_WAIT_SECS.saturating_mul(1_000);
+        let _ = WaitForSingleObject(handle, timeout);
+        let _ = CloseHandle(handle);
+    }
 }
 
-fn helper_script(pid: u32, target: &Path, staged: &Path) -> String {
+/// Keeps the running build as the rollback copy, then publishes the verified download over it.
+fn swap_into_place(target: &Path, staged: &Path) {
+    if !staged.exists() {
+        return;
+    }
     let backup = install::backup_path(target);
-    let staged = batch_arg(staged);
-    let target = batch_arg(target);
-    let backup = batch_arg(&backup);
-    let tries = crate::timings::SWAP_WAIT_SECS;
-    format!(
-        "@echo off\r\n\
-         setlocal DisableDelayedExpansion\r\n\
-         set /a n=0\r\n\
-         :wait\r\n\
-         tasklist /fi \"PID eq {pid}\" 2>nul | find \"{pid}\" >nul\r\n\
-         if errorlevel 1 goto swap\r\n\
-         set /a n+=1\r\n\
-         if %n% geq {tries} goto swap\r\n\
-         timeout /t 1 /nobreak >nul 2>&1 || ping -n 2 127.0.0.1 >nul\r\n\
-         goto wait\r\n\
-         :swap\r\n\
-         if not exist {staged} goto launch\r\n\
-         if not exist {target} goto replace\r\n\
-         if exist {backup} goto replace\r\n\
-         move /y {target} {backup} >nul\r\n\
-         :replace\r\n\
-         move /y {staged} {target} >nul\r\n\
-         if exist {target} goto launch\r\n\
-         if exist {backup} move /y {backup} {target} >nul\r\n\
-         :launch\r\n\
-         if exist {target} start \"\" {target}\r\n\
-         if not exist {target} if exist {staged} start \"\" {staged}\r\n\
-         del \"%~f0\" >nul\r\n",
-        pid = pid,
-        staged = staged,
-        target = target,
-        backup = backup,
-        tries = tries,
-    )
+    if target.exists() && !backup.exists() {
+        if let Err(err) = fs::rename(target, &backup) {
+            error!("could not keep the current build: {err}");
+        }
+    }
+    if let Err(err) = fs::rename(staged, target) {
+        error!("could not publish the downloaded build: {err}");
+        if backup.exists() {
+            let _ = fs::rename(&backup, target);
+        }
+    }
+}
+
+/// Falls back to the staged copy, so a failed publish still leaves a running app.
+fn launch(target: &Path, staged: &Path) {
+    let exe = if target.is_file() { target } else { staged };
+    if !exe.is_file() {
+        error!(
+            "swap finished with nothing to launch at {}",
+            target.display()
+        );
+        return;
+    }
+    if let Err(err) = Command::new(exe).creation_flags(CREATE_NO_WINDOW.0).spawn() {
+        error!("could not relaunch {}: {err}", exe.display());
+    }
 }
 
 #[cfg(test)]
@@ -526,22 +537,33 @@ mod tests {
     const TARGET: &str = "C:\\Users\\a\\.burntfern\\slate\\slate.exe";
     const STAGED: &str = "C:\\Users\\a\\.burntfern\\slate\\updates\\slate-update-v0.2.0-x64.exe";
 
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("slate-swap-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("scratch dir");
+        dir
+    }
+
     #[test]
-    fn swap_helper_waits_then_replaces_and_relaunches() {
-        let script = helper_script(
-            4242,
-            Path::new("C:\\apps\\slate.exe"),
-            Path::new("C:\\Temp\\slate-update.exe"),
-        );
-        assert!(script.contains("tasklist /fi \"PID eq 4242\""));
-        assert!(script.contains("if errorlevel 1 goto swap"));
-        assert!(script.contains("start \"\" \"C:\\apps\\slate.exe\""));
-        assert!(script.contains("del \"%~f0\""));
-        assert!(script.contains(&format!(
-            "if %n% geq {} goto swap",
-            crate::timings::SWAP_WAIT_SECS
-        )));
-        assert!(script.contains("timeout /t 1 /nobreak"));
+    fn parse_swap_args_reads_the_three_positionals() {
+        let args = ["4242".to_string(), TARGET.to_string(), STAGED.to_string()];
+        let request = parse_swap_args(&args).expect("valid args");
+        assert_eq!(request.pid, 4242);
+        assert_eq!(request.target, PathBuf::from(TARGET));
+        assert_eq!(request.staged, PathBuf::from(STAGED));
+    }
+
+    #[test]
+    fn parse_swap_args_rejects_a_bad_pid() {
+        let args = ["later".to_string(), TARGET.to_string(), STAGED.to_string()];
+        assert!(parse_swap_args(&args).is_none());
+    }
+
+    #[test]
+    fn parse_swap_args_rejects_missing_arguments() {
+        assert!(parse_swap_args(&[]).is_none());
+        assert!(parse_swap_args(&["4242".to_string()]).is_none());
+        assert!(parse_swap_args(&["4242".to_string(), TARGET.to_string()]).is_none());
     }
 
     #[test]
@@ -553,64 +575,55 @@ mod tests {
     }
 
     #[test]
-    fn swap_helper_backs_up_and_swaps_without_reverifying() {
-        let target = Path::new(TARGET);
-        let staged = Path::new(STAGED);
-        let backup = install::backup_path(target);
-        let script = helper_script(7, target, staged);
+    fn swap_into_place_keeps_the_previous_build() {
+        let dir = scratch("keeps");
+        let target = dir.join("slate.exe");
+        let staged = dir.join("staged.exe");
+        fs::write(&target, b"old").expect("old build");
+        fs::write(&staged, b"new").expect("new build");
 
-        assert!(!script.contains("certutil"));
-        assert!(!script.contains("slate-new.exe"));
-        assert!(script.contains("setlocal DisableDelayedExpansion"));
+        swap_into_place(&target, &staged);
 
-        assert!(script.contains(&format!("if not exist {} goto replace", batch_arg(target))));
-        assert!(script.contains(&format!("if exist {} goto replace", batch_arg(&backup))));
-
-        let back_up = format!("move /y {} {} >nul", batch_arg(target), batch_arg(&backup));
-        let swap = format!("move /y {} {} >nul", batch_arg(staged), batch_arg(target));
-        let restore = format!("move /y {} {} >nul", batch_arg(&backup), batch_arg(target));
-        assert!(script.contains(&back_up));
-        assert!(script.contains(&swap));
-        assert!(script.contains(&restore));
-        assert!(script.find(&back_up).unwrap() < script.find(&swap).unwrap());
+        assert_eq!(fs::read(&target).expect("published"), b"new".to_vec());
+        assert_eq!(
+            fs::read(install::backup_path(&target)).expect("backup"),
+            b"old".to_vec()
+        );
+        assert!(!staged.exists(), "the staged copy is consumed");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn batch_paths_stay_literal_for_cmd() {
-        assert_eq!(
-            batch_arg(Path::new("C:\\Users\\John Doe\\slate.exe")),
-            "\"C:\\Users\\John Doe\\slate.exe\""
-        );
-        assert_eq!(
-            batch_arg(Path::new("C:\\100%\\slate.exe")),
-            "\"C:\\100%%\\slate.exe\""
-        );
-        assert_eq!(
-            batch_arg(Path::new("C:\\a&b^c|d(e)\\slate.exe")),
-            "\"C:\\a&b^c|d(e)\\slate.exe\""
-        );
+    fn swap_into_place_ignores_a_missing_download() {
+        let dir = scratch("missing");
+        let target = dir.join("slate.exe");
+        fs::write(&target, b"old").expect("old build");
+
+        swap_into_place(&target, &dir.join("staged.exe"));
+
+        assert_eq!(fs::read(&target).expect("untouched"), b"old".to_vec());
+        assert!(!install::backup_path(&target).exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn helper_script_escapes_special_paths() {
-        let target = Path::new("C:\\Users\\a%b&c\\.burntfern\\slate\\slate.exe");
-        let staged =
-            Path::new("C:\\Users\\a%b&c\\.burntfern\\slate\\updates\\slate-update-v0.2.0-x64.exe");
-        let script = helper_script(7, target, staged);
+    fn swap_into_place_leaves_an_existing_backup_alone() {
+        let dir = scratch("existing-backup");
+        let target = dir.join("slate.exe");
+        let staged = dir.join("staged.exe");
+        fs::write(&target, b"old").expect("old build");
+        fs::write(&staged, b"new").expect("new build");
+        fs::write(install::backup_path(&target), b"older").expect("older backup");
 
-        assert!(!script.contains("a%b"));
-        assert!(script.contains("\"C:\\Users\\a%%b&c\\.burntfern\\slate\\slate.exe\""));
-        assert!(script.contains("\"C:\\Users\\a%%b&c\\.burntfern\\slate\\slate.exe.old\""));
-        assert!(script.contains("\"C:\\Users\\a%%b&c\\.burntfern\\slate\\updates\\"));
-    }
+        swap_into_place(&target, &staged);
 
-    #[test]
-    fn swap_helper_is_handed_a_bare_name() {
-        let name = swap_helper_name(4242);
-        assert_eq!(name, "slate-swap-4242.bat");
-        assert!(name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.')));
+        assert_eq!(fs::read(&target).expect("published"), b"new".to_vec());
+        assert_eq!(
+            fs::read(install::backup_path(&target)).expect("backup kept"),
+            b"older".to_vec(),
+            "an existing rollback copy is not overwritten"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

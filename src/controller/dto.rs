@@ -252,8 +252,7 @@ pub struct TabMenu {
     pub at: (f32, f32),
 }
 
-/// One row of a tab's context menu, built by the controller so the keyboard cursor and the
-/// painted rows can never drift apart.
+/// One row of a tab's context menu, built by the controller so the keyboard cursor and the painted rows can never drift apart.
 #[derive(Clone)]
 pub struct ContextMenuItem {
     pub id: &'static str,
