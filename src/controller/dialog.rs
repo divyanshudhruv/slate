@@ -33,7 +33,7 @@ fn shortcut_of(action: KeyAction) -> Shortcut {
     }
 }
 
-/// Rebuilds the keyboard hook's table from settings, so every chord change lands without a restart.
+/// Rebuilds the hotkey table from settings, so every chord change lands without a restart.
 pub(super) fn push_shortcuts(settings: &config::Settings) {
     let table = settings
         .keybinds

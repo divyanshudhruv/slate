@@ -4,8 +4,10 @@ use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, WAIT_EVENT};
+use windows::Win32::System::Threading::{
+    CreateMutexW, OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+};
 
 use crate::core::install;
 
@@ -62,7 +64,7 @@ fn focus_running() {
         .ok()
         .and_then(|text| text.trim().parse::<u32>().ok())
         .filter(|pid| *pid != std::process::id())
-        .filter(|pid| crate::win::process_alive(*pid));
+        .filter(|pid| process_alive(*pid));
     if let Some(pid) = pid {
         crate::win::activate_process(pid);
     }
@@ -70,4 +72,29 @@ fn focus_running() {
         "Slate is already running",
         "Only one copy can use this settings folder. Switch to the open window, or set SLATE_PORTABLE to run a separate one.",
     );
+}
+
+/// The pid in `instance.pid` while that copy is alive and is not this process.
+pub fn running_pid() -> Option<u32> {
+    let pid = std::fs::read_to_string(pid_path())
+        .ok()?
+        .trim()
+        .parse::<u32>()
+        .ok()?;
+    (pid != std::process::id() && process_alive(pid)).then_some(pid)
+}
+
+/// True while a process with this id still exists; used to tell a crashed session from a running one.
+pub fn process_alive(pid: u32) -> bool {
+    const ERROR_INVALID_PARAMETER_LOW: u32 = 87;
+    unsafe {
+        match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            Ok(handle) => {
+                let alive = WaitForSingleObject(handle, 0) != WAIT_EVENT(0);
+                let _ = CloseHandle(handle);
+                alive
+            }
+            Err(e) => (e.code().0 as u32 & 0xFFFF) != ERROR_INVALID_PARAMETER_LOW,
+        }
+    }
 }

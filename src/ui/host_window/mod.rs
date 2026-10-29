@@ -186,7 +186,7 @@ fn banner_strip(
             ctrl.update(cx, |c, cx| c.dispatch(Cmd::BannerAction(action), cx));
         });
     }
-    // Only an offer can be waved off; a download or a restart is already underway.
+    // Only an offer can be waved off; a failed check keeps its retry strip.
     if matches!(info.update, UpdateState::Available(_)) {
         let ctrl = controller.clone();
         banner = banner.on_dismiss(move |_window, cx| {
@@ -208,20 +208,12 @@ fn update_banner(update: &UpdateState, hidden: Option<&str>) -> Option<UpdateBan
             }
             Some((
                 Severity::Info,
-                format!("Slate v{version} is available."),
-                Some(("Download", BannerAction::InstallUpdate)),
+                format!(
+                    "Slate v{version} is out. Download it from GitHub while this copy keeps running."
+                ),
+                Some(("Download", BannerAction::OpenReleasePage)),
             ))
         }
-        UpdateState::Downloading(version, percent) => Some((
-            Severity::Info,
-            format!("Downloading Slate v{version}: {percent}%"),
-            None,
-        )),
-        UpdateState::Installing(version) => Some((
-            Severity::Warning,
-            format!("Slate v{version} is ready - restart to finish."),
-            Some(("Restart", BannerAction::RestartUpdate)),
-        )),
         _ => None,
     }
 }
@@ -626,14 +618,17 @@ mod tests {
     use ely_gpui_component::primitives::Severity;
 
     #[test]
-    fn an_available_update_offers_a_download() {
+    fn an_available_update_offers_the_download_page() {
         let (severity, text, action) =
             update_banner(&UpdateState::Available("0.5.0".into()), None).expect("an offer");
         assert_eq!(severity, Severity::Info);
-        assert_eq!(text, "Slate v0.5.0 is available.");
+        assert_eq!(
+            text,
+            "Slate v0.5.0 is out. Download it from GitHub while this copy keeps running."
+        );
         let (label, action) = action.expect("an action");
         assert_eq!(label, "Download");
-        assert!(matches!(action, BannerAction::InstallUpdate));
+        assert!(matches!(action, BannerAction::OpenReleasePage));
     }
 
     #[test]
@@ -643,25 +638,6 @@ mod tests {
             update_banner(&UpdateState::Available("0.5.1".into()), Some("0.5.0")).is_some(),
             "a newer version shows again"
         );
-    }
-
-    #[test]
-    fn a_download_reports_progress_and_cannot_be_dismissed() {
-        let (severity, text, action) =
-            update_banner(&UpdateState::Downloading("0.5.0".into(), 42), None).expect("progress");
-        assert_eq!(severity, Severity::Info);
-        assert_eq!(text, "Downloading Slate v0.5.0: 42%");
-        assert!(action.is_none());
-    }
-
-    #[test]
-    fn a_ready_build_offers_a_restart() {
-        let (severity, _, action) =
-            update_banner(&UpdateState::Installing("0.5.0".into()), None).expect("a restart");
-        assert_eq!(severity, Severity::Warning);
-        let (label, action) = action.expect("an action");
-        assert_eq!(label, "Restart");
-        assert!(matches!(action, BannerAction::RestartUpdate));
     }
 
     #[test]

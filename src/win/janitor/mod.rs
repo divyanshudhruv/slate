@@ -2,12 +2,12 @@ mod wire;
 
 use std::path::{Path, PathBuf};
 
-use windows::Win32::Foundation::{CloseHandle, HWND, WAIT_EVENT};
-use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, IsWindow, GWL_HWNDPARENT};
 
 use super::host::{unregister_member, StylingState};
-pub use wire::{decode, encode};
+use super::instance::process_alive;
+use wire::{decode, encode};
 
 #[derive(Default)]
 pub struct Janitor {
@@ -17,6 +17,7 @@ pub struct Janitor {
 
 impl Janitor {
     pub fn new() -> Self {
+        cleanup_legacy();
         // Restores whatever a previous crash left behind; the windows stay where the session put them.
         sweep_stale();
         Self {
@@ -25,7 +26,7 @@ impl Janitor {
         }
     }
 
-    /// Drops the payload after a clean restore, so the next launch has nothing left to replay.
+    /// Drops the recovery file after a clean restore, so the next launch has nothing left to replay.
     pub fn disarm(&mut self) {
         if let Some(path) = self.path.take() {
             let _ = std::fs::remove_file(path);
@@ -37,10 +38,9 @@ impl Janitor {
         let Some(path) = self.path.clone() else {
             return;
         };
-        let Some(key) = hmac_key() else {
+        let Some(bytes) = encode(slate_hwnd, members) else {
             return;
         };
-        let bytes = encode(&key, slate_hwnd, members);
         if self.last.as_deref() == Some(bytes.as_slice()) {
             return;
         }
@@ -53,123 +53,31 @@ impl Janitor {
 pub fn state_path() -> PathBuf {
     let dir = crate::config::paths::data_dir();
     let _ = std::fs::create_dir_all(&dir);
-    dir.join(format!("janitor-{}.bin", std::process::id()))
+    dir.join(format!("recovery-{}.json", std::process::id()))
 }
 
-fn hmac_key() -> Option<[u8; 32]> {
-    static KEY: std::sync::OnceLock<Option<[u8; 32]>> = std::sync::OnceLock::new();
-    *KEY.get_or_init(load_or_create_key)
-}
-
-fn key_path() -> PathBuf {
-    crate::config::paths::data_dir().join("janitor.key")
-}
-
-/// DPAPI-protected so another account cannot forge it; older raw 32-byte files get rewritten.
-/// A key that exists but cannot be read is kept: replacing it would orphan every payload.
-fn load_or_create_key() -> Option<[u8; 32]> {
-    let path = key_path();
-    if path.exists() {
-        let Ok(bytes) = std::fs::read(&path) else {
-            tracing::error!("could not read the janitor key; crash recovery is off");
-            return None;
-        };
-        if let Ok(key) = <[u8; 32]>::try_from(bytes.as_slice()) {
-            save_key(&path, &key);
-            return Some(key);
-        }
-        if let Some(raw) = unprotect(&bytes) {
-            if let Ok(key) = <[u8; 32]>::try_from(raw.as_slice()) {
-                return Some(key);
-            }
-        }
-        tracing::error!("the janitor key is unreadable; leaving it and skipping recovery");
-        return None;
-    }
-    let mut key = [0u8; 32];
-    let generated = unsafe {
-        use windows::Win32::Security::Cryptography::{
-            BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
-        };
-        BCryptGenRandom(None, &mut key, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
-    };
-    if generated.is_err() {
-        return None;
-    }
-    save_key(&path, &key);
-    Some(key)
-}
-
-fn save_key(path: &Path, key: &[u8; 32]) {
-    let Some(sealed) = protect(key) else {
+/// Older builds kept a signed binary payload and a DPAPI key; neither is read any more.
+fn cleanup_legacy() {
+    let dir = crate::config::paths::data_dir();
+    let _ = std::fs::remove_file(dir.join("janitor.key"));
+    let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(path, sealed);
-}
-
-fn protect(plain: &[u8]) -> Option<Vec<u8>> {
-    use windows::Win32::Security::Cryptography::{
-        CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
-    };
-    unsafe {
-        let input = CRYPT_INTEGER_BLOB {
-            cbData: plain.len() as u32,
-            pbData: plain.as_ptr() as *mut u8,
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(rest) = name.strip_prefix("janitor-") else {
+            continue;
         };
-        let mut output = CRYPT_INTEGER_BLOB::default();
-        CryptProtectData(
-            &input,
-            windows::core::PCWSTR::null(),
-            None,
-            None,
-            None,
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output,
-        )
-        .ok()?;
-        let sealed = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
-        free_blob(&output);
-        Some(sealed)
-    }
-}
-
-fn unprotect(sealed: &[u8]) -> Option<Vec<u8>> {
-    use windows::Win32::Security::Cryptography::{
-        CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
-    };
-    unsafe {
-        let input = CRYPT_INTEGER_BLOB {
-            cbData: sealed.len() as u32,
-            pbData: sealed.as_ptr() as *mut u8,
-        };
-        let mut output = CRYPT_INTEGER_BLOB::default();
-        CryptUnprotectData(
-            &input,
-            None,
-            None,
-            None,
-            None,
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output,
-        )
-        .ok()?;
-        let plain = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
-        free_blob(&output);
-        Some(plain)
-    }
-}
-
-fn free_blob(blob: &windows::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB) {
-    use windows::Win32::Foundation::LocalFree;
-    unsafe {
-        if !blob.pbData.is_null() {
-            let _ = LocalFree(Some(windows::Win32::Foundation::HLOCAL(
-                blob.pbData as *mut core::ffi::c_void,
-            )));
+        let pid: u32 = rest
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+        if pid != 0 && pid != std::process::id() && process_alive(pid) {
+            continue;
         }
+        let _ = std::fs::remove_file(entry.path());
     }
 }
 
@@ -199,18 +107,29 @@ pub fn sweep_stale() {
                 continue;
             }
         };
-        if outcome.complete {
-            let _ = std::fs::remove_file(&path);
-        } else {
-            // A replay that could not finish is parked, so the next start does not restore the same windows twice.
-            quarantine(&path);
+        match outcome {
+            Some(result) if result.complete => {
+                let _ = std::fs::remove_file(&path);
+            }
+            Some(_) => {
+                // A replay that could not finish is parked, so the next start does not restore the same windows twice.
+                quarantine(&path);
+            }
+            None => {
+                // Nothing here can be replayed, and leaving it would retry on every start.
+                tracing::warn!(
+                    "{} is not readable recovery state; dropping it",
+                    path.display()
+                );
+                let _ = std::fs::remove_file(&path);
+            }
         }
     }
 }
 
 /// Renames a payload that could not be fully restored, keeping it for support without retrying it.
 fn quarantine(path: &Path) {
-    let failed = path.with_extension("bin.failed");
+    let failed = path.with_extension("json.failed");
     tracing::warn!(
         "some windows could not be restored from {}; moving it to {}",
         path.display(),
@@ -220,24 +139,10 @@ fn quarantine(path: &Path) {
 }
 
 fn parse_state_name(name: &str) -> Option<u32> {
-    name.strip_prefix("janitor-")?
-        .strip_suffix(".bin")?
+    name.strip_prefix("recovery-")?
+        .strip_suffix(".json")?
         .parse()
         .ok()
-}
-
-pub fn process_alive(pid: u32) -> bool {
-    const ERROR_INVALID_PARAMETER_LOW: u32 = 87;
-    unsafe {
-        match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-            Ok(handle) => {
-                let alive = WaitForSingleObject(handle, 0) != WAIT_EVENT(0);
-                let _ = CloseHandle(handle);
-                alive
-            }
-            Err(e) => (e.code().0 as u32 & 0xFFFF) != ERROR_INVALID_PARAMETER_LOW,
-        }
-    }
 }
 
 pub fn write(path: &Path, bytes: &[u8]) -> bool {
@@ -253,16 +158,9 @@ struct RestoreOutcome {
     complete: bool,
 }
 
-fn restore(bytes: &[u8]) -> RestoreOutcome {
-    let mut outcome = RestoreOutcome { complete: true };
-    let Some(key) = hmac_key() else {
-        outcome.complete = false;
-        return outcome;
-    };
-    let Some((slate_hwnd, members)) = decode(&key, bytes) else {
-        outcome.complete = false;
-        return outcome;
-    };
+fn restore(bytes: &[u8]) -> Option<RestoreOutcome> {
+    let (slate_hwnd, members) = decode(bytes)?;
+    let mut complete = true;
     for (hwnd, st) in members {
         unsafe {
             if !IsWindow(Some(HWND(hwnd as *mut _))).as_bool() {
@@ -274,7 +172,7 @@ fn restore(bytes: &[u8]) -> RestoreOutcome {
             }
         }
         let ok = unregister_member(hwnd, &st);
-        outcome.complete &= ok;
+        complete &= ok;
     }
-    outcome
+    Some(RestoreOutcome { complete })
 }

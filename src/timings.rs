@@ -2,7 +2,7 @@ use std::time::Duration;
 
 /// How often the controller processes queued work while active.
 pub const UI_TICK: Duration = Duration::from_millis(50);
-/// Backoff when nothing interacts with the host; shortcuts arrive on a global hook, so it bounds queued chords.
+/// Backoff when nothing interacts with the host; shortcuts arrive through system hotkeys, so it bounds queued chords.
 pub const UI_IDLE_TICK: Duration = Duration::from_millis(80);
 /// How often the pick overlay checks for Tab/Escape.
 pub const PICK_POLL: Duration = Duration::from_millis(40);
@@ -18,5 +18,3 @@ pub const PREVIEW_LINGER_MS: u64 = 200;
 pub const DEFAULT_PREVIEW_DELAY_MS: u64 = 500;
 /// Upper bound for the user-configurable preview delay.
 pub const MAX_PREVIEW_DELAY_MS: u64 = 5_000;
-/// How long the swap helper waits for Slate to exit before swapping anyway.
-pub const SWAP_WAIT_SECS: u32 = 600;

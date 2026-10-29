@@ -23,14 +23,7 @@ use gpui::{px, size, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOp
 fn main() {
     crate::config::paths::ensure_dirs();
     logging::init();
-    let args: Vec<String> = std::env::args().collect();
-    if let Some(i) = args.iter().position(|a| a == "--swap-helper") {
-        if let Some(request) = win::update::parse_swap_args(&args[i + 1..]) {
-            win::update::run_swap_helper(request);
-        }
-        return;
-    }
-    // The swap helper must return before this, so it never installs the layout hooks or runs startup.
+    // The install plan is applied before any window exists, and the UI only starts on the canonical exe.
     win::keys::install();
     if let Some(code) = controller::startup() {
         std::process::exit(code);

@@ -1,5 +1,8 @@
 # Changelog
 
+> Entries below are generated from past commits and describe behaviour that has since been removed: the global keyboard hook, the HMAC-signed janitor payload, and the self-swap update helper.
+> Shortcuts now use `RegisterHotKey`, crash recovery is plain JSON, and Slate only checks for newer releases instead of installing them.
+
 ## [0.5.1](https://github.com/divyanshudhruv/slate/compare/v0.5.0...v0.5.1) (2026-10-29)
 
 

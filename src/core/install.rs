@@ -5,29 +5,6 @@ use super::update::{is_newer, parse_version};
 pub const OLD_NAME: &str = "slate.exe.old";
 pub const STAGED_NAME: &str = "slate-staged.exe";
 pub const CANONICAL_NAME: &str = "slate.exe";
-pub const STAGING_PREFIX: &str = "slate-";
-/// Written before a swap, cleared once the new build reaches its first frame.
-pub const UPDATE_MARKER: &str = "update-pending.json";
-pub const FAILED_NAME: &str = "slate.failed.exe";
-
-/// Where the launch guard stands, judged from the marker left by the swap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LaunchGuard {
-    /// No update in flight.
-    Clear,
-    /// First start after a swap; clearing the marker later proves it launched.
-    FirstStart,
-    /// The previous post-swap start never reached the UI, so the old exe comes back.
-    Rollback,
-}
-
-pub fn launch_guard(attempts: Option<u32>) -> LaunchGuard {
-    match attempts {
-        None => LaunchGuard::Clear,
-        Some(0) => LaunchGuard::FirstStart,
-        Some(_) => LaunchGuard::Rollback,
-    }
-}
 
 pub fn backup_path(canonical: &Path) -> PathBuf {
     canonical.with_file_name(OLD_NAME)
@@ -159,28 +136,6 @@ pub fn parse_release_filename(path: &Path) -> Option<(String, String)> {
     Some((version.to_string(), arch.to_string()))
 }
 
-pub fn checksum_for<'a>(sums: &'a str, file: &str) -> Option<&'a str> {
-    sums.lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let (hash, name) = line.split_once("  ")?;
-            let name = name.trim();
-            if name.eq_ignore_ascii_case(file)
-                && hash.len() == 64
-                && hash.chars().all(|c| c.is_ascii_hexdigit())
-            {
-                Some(hash)
-            } else {
-                None
-            }
-        })
-        .next()
-}
-
-pub fn staged_download_name(version: &str, arch: &str) -> String {
-    format!("{STAGING_PREFIX}update-v{version}-{arch}.exe")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,14 +210,6 @@ mod tests {
         assert!(needs_backup(true, false));
         assert!(!needs_backup(true, true));
         assert!(!needs_backup(false, true));
-    }
-
-    #[test]
-    fn launch_guard_allows_one_try_then_rolls_back() {
-        assert_eq!(launch_guard(None), LaunchGuard::Clear);
-        assert_eq!(launch_guard(Some(0)), LaunchGuard::FirstStart);
-        assert_eq!(launch_guard(Some(1)), LaunchGuard::Rollback);
-        assert_eq!(launch_guard(Some(9)), LaunchGuard::Rollback);
     }
 
     #[test]
@@ -430,24 +377,5 @@ mod tests {
         ] {
             assert_eq!(parse_release_filename(Path::new(bad)), None, "{bad}");
         }
-    }
-
-    #[test]
-    fn checksum_matches_release_yml_format() {
-        let h1 = "a".repeat(64);
-        let h2 = "b".repeat(64);
-        let sums = format!("{h1}  slate-v0.1.0-x64.exe\n{h2}  slate-v0.1.0-arm64.exe\n");
-        assert_eq!(
-            checksum_for(&sums, "slate-v0.1.0-x64.exe"),
-            Some(h1.as_str())
-        );
-        assert_eq!(
-            checksum_for(&sums, "slate-v0.1.0-arm64.exe"),
-            Some(h2.as_str())
-        );
-        assert_eq!(checksum_for(&sums, "slate-v9.9.9-x64.exe"), None);
-        assert_eq!(checksum_for("not a sums file", "slate.exe"), None);
-        let bad = "short  slate-v0.1.0-x64.exe\nzzz  slate-v0.1.0-arm64.exe\n";
-        assert_eq!(checksum_for(bad, "slate-v0.1.0-x64.exe"), None);
     }
 }

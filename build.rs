@@ -65,10 +65,15 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
+      VALUE "CompanyName", "Burntfern"
+      VALUE "LegalCopyright", "Copyright (C) Divyanshu Dhruv"
       VALUE "FileDescription", "Slate"
       VALUE "FileVersion", "{version}"
+      VALUE "InternalName", "slate"
+      VALUE "OriginalFilename", "slate.exe"
       VALUE "ProductName", "Slate"
       VALUE "ProductVersion", "{version}"
+      VALUE "Comments", "Real tabs for Windows"
     END
   END
   BLOCK "VarFileInfo"

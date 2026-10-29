@@ -15,8 +15,8 @@ impl Controller {
                 self.host_hwnd = Some(hwnd);
                 self.titlebar = titlebar;
                 install_window_icon(hwnd);
-                // The first frame is up, so a swapped-in build has proven it launches.
-                crate::win::update::clear_update_marker();
+                // The first frame is up, so the copy kept for a failed publish is no longer needed.
+                crate::win::update::drop_update_backup();
                 if let Some(tray) = &self.tray {
                     tray.set_host(hwnd);
                 }
@@ -154,16 +154,12 @@ impl Controller {
             Cmd::ResetKeybinds => self.reset_keybinds(cx),
             Cmd::CommitKeybinds => self.commit_keybinds(cx),
             Cmd::BannerAction(action) => match action {
-                BannerAction::InstallUpdate => {
-                    if let crate::core::UpdateState::Available(version) = self.updater.state.clone()
-                    {
-                        self.install_available_update(version, cx);
-                    }
+                BannerAction::OpenReleasePage => {
+                    crate::win::shell::open_url(crate::core::update::RELEASES_URL);
                 }
                 BannerAction::RetryUpdateCheck => {
                     self.check_for_updates(true, cx);
                 }
-                BannerAction::RestartUpdate => self.restart_for_update(cx),
             },
             Cmd::DismissBanner => self.dismiss_banner(cx),
             Cmd::DismissUpdateBanner => self.dismiss_update_banner(cx),

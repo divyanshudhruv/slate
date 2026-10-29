@@ -1,5 +1,4 @@
 use gpui::Context;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -100,105 +99,7 @@ impl Controller {
         cx.notify();
     }
 
-    pub(super) fn install_available_update(&mut self, version: String, cx: &mut Context<Self>) {
-        self.updater.pending_install = None;
-        self.updater.state = UpdateState::Downloading(version.clone(), 0);
-        self.invalidate_info();
-        cx.notify();
-        // The download thread writes here; the banner polls it so progress ticks without a channel.
-        let percent = Arc::new(AtomicU8::new(0));
-        let reported = percent.clone();
-        let install_version = version.clone();
-        run_off_thread(
-            cx,
-            move || {
-                let staged = crate::win::update::download_release_with_progress(
-                    &install_version,
-                    |value| {
-                        reported.store(value, Ordering::Relaxed);
-                    },
-                )?;
-                Ok::<_, String>((install_version, staged))
-            },
-            move |controller, result, cx| match result {
-                Ok((staged_version, staged)) => {
-                    controller.updater.pending_install = Some((staged_version.clone(), staged));
-                    controller.updater.state = UpdateState::Installing(staged_version);
-                    controller.invalidate_info();
-                    cx.notify();
-                }
-                Err(err) => {
-                    controller.updater.state = UpdateState::Available(version);
-                    controller.invalidate_info();
-                    cx.notify();
-                    controller.note_error(
-                        format!("Update failed: {err}"),
-                        Some(("Retry".into(), BannerAction::RetryUpdateCheck)),
-                        cx,
-                    );
-                }
-            },
-        );
-        let ticking = percent.clone();
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(150))
-                .await;
-            let running = this
-                .update(cx, |controller, cx| {
-                    controller.report_download(ticking.as_ref(), cx)
-                })
-                .unwrap_or(false);
-            if !running {
-                break;
-            }
-        })
-        .detach();
-    }
-
-    /// Copies the download counter into the state so the banner can show the same number.
-    fn report_download(&mut self, percent: &AtomicU8, cx: &mut Context<Self>) -> bool {
-        let (version, seen) = match &self.updater.state {
-            UpdateState::Downloading(version, seen) => (version.clone(), *seen),
-            _ => return false,
-        };
-        let arrived = percent.load(Ordering::Relaxed);
-        if arrived != seen {
-            self.updater.state = UpdateState::Downloading(version, arrived);
-            self.invalidate_info();
-            cx.notify();
-        }
-        true
-    }
-
-    /// Restart on the Ready banner: hand the staged build to the swap helper, then quit.
-    pub(super) fn restart_for_update(&mut self, cx: &mut Context<Self>) {
-        let Some((version, staged)) = self.updater.pending_install.clone() else {
-            return;
-        };
-        let canonical = config::canonical_exe_path();
-        let pid = std::process::id();
-        if !config::save_install(&config::InstallRecord {
-            path: canonical.to_string_lossy().into_owned(),
-            version,
-            pid,
-        }) {
-            self.note_error(
-                "Could not write the install record, so the update was not applied.",
-                None,
-                cx,
-            );
-            return;
-        }
-        if let Err(err) = crate::win::update::spawn_swap_helper(pid, &canonical, &staged) {
-            self.note_error(format!("Could not restart for the update: {err}"), None, cx);
-            return;
-        }
-        self.shutdown();
-        cx.quit();
-    }
-
-    fn apply_update_result(
+    pub(super) fn apply_update_result(
         &mut self,
         result: Result<String, String>,
         notify: bool,
