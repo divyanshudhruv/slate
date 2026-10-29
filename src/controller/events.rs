@@ -116,7 +116,7 @@ impl Controller {
         let members: Vec<(isize, StylingState)> =
             self.styling.iter().map(|(k, v)| (*k, v.clone())).collect();
         self.janitor.persist(host, &members);
-        // The shortcut hook only does anything while a member is focused, so it is installed with the first one and dropped with the last.
+        // The hotkeys are registered by the foreground hook, so the table follows focus.
         if self.styling.is_empty() {
             self.shortcuts = None;
         } else if self.shortcuts.is_none() {

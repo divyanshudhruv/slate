@@ -73,7 +73,7 @@ Older builds know nothing about `%LOCALAPPDATA%`, so they start with defaults in
 2. Download the older release and run it once.
 3. Copy `settings.json` and `sets.json` from `%LOCALAPPDATA%\Burntfern\Slate\` into `%USERPROFILE%\.burntfern\slate\` while the old build is closed.
 
-Updates themselves keep the previous binary as `slate.exe.old` next to the installed exe. If a swapped-in build never reaches its first frame, Slate rolls back to that copy automatically; `update-pending.json` records the swap until it is cleared.
+Updates themselves keep the previous binary as `slate.exe.old` next to the installed exe. Run a downloaded release and that copy replaces `slate.exe` and relaunches it; Slate itself only checks GitHub for a newer tag and never downloads anything.
 
 ## Portable mode
 

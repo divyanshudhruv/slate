@@ -24,7 +24,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 tracing-appender = "0.2"
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
-hex = "0.4"
 
 [build-dependencies]
 embed-resource = "3.0.12"
@@ -41,7 +40,6 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     "Win32_System_LibraryLoader",
     "Win32_Security",
-    "Win32_Security_Cryptography",
     "Win32_Graphics_Dwm",
     "Win32_UI_HiDpi",
     "Win32_UI_Shell",

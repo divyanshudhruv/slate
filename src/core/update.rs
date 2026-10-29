@@ -1,6 +1,5 @@
 pub const REPO_SLUG: &str = "divyanshudhruv/slate";
 pub const REPOSITORY_URL: &str = "https://github.com/divyanshudhruv/slate";
-#[cfg(test)]
 pub const RELEASES_URL: &str = "https://github.com/divyanshudhruv/slate/releases/latest";
 pub const LATEST_API_URL: &str =
     "https://api.github.com/repos/divyanshudhruv/slate/releases/latest";
@@ -14,11 +13,8 @@ pub enum UpdateState {
     Idle,
     Checking,
     UpToDate,
+    /// A newer release exists; Slate only ever links to its download page.
     Available(String),
-    /// Version, then how much of the asset has arrived, 0 to 100.
-    Downloading(String, u8),
-    /// Verified and handed to the swap helper, so the window is about to restart.
-    Installing(String),
     Failed,
 }
 
@@ -132,14 +128,6 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
 pub fn asset_name(tag: &str, arch: &str) -> String {
     let tag = tag.trim().trim_start_matches(['v', 'V']);
     format!("slate-v{tag}-{arch}.exe")
-}
-
-pub fn download_url(tag: &str, arch: &str) -> String {
-    let tag = tag.trim().trim_start_matches(['v', 'V']);
-    format!(
-        "https://github.com/{REPO_SLUG}/releases/download/v{tag}/{}",
-        asset_name(tag, arch)
-    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,18 +320,6 @@ mod tests {
         assert_eq!(
             LATEST_API_URL,
             format!("https://api.github.com/repos/{REPO_SLUG}/releases/latest")
-        );
-    }
-
-    #[test]
-    fn download_url_matches_release_asset_names() {
-        assert_eq!(
-            download_url("0.2.0", "x64"),
-            "https://github.com/divyanshudhruv/slate/releases/download/v0.2.0/slate-v0.2.0-x64.exe"
-        );
-        assert_eq!(
-            download_url("v0.2.0", "arm64"),
-            "https://github.com/divyanshudhruv/slate/releases/download/v0.2.0/slate-v0.2.0-arm64.exe"
         );
     }
 

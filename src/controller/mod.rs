@@ -109,11 +109,10 @@ impl Menus {
     }
 }
 
-/// The update check, the verified build waiting for a restart, and the banner that announces it.
+/// The update check and the banner that announces a newer release.
 #[derive(Default)]
 struct Updater {
     state: UpdateState,
-    pending_install: Option<(String, std::path::PathBuf)>,
     banner: Option<BannerView>,
     banner_id: u64,
     banner_hidden: Option<String>,
@@ -237,7 +236,7 @@ impl Controller {
                     version: crate::core::update::CURRENT_VERSION.to_string(),
                     pid: std::process::id(),
                 });
-                // The pre-update backup is dropped on the first frame instead, so a build that never starts can roll back.
+                // A published build keeps the old copy until its first frame, so the download can be retried.
                 None
             }
             crate::core::install::Plan::FocusRunning { pid } => {
@@ -249,21 +248,24 @@ impl Controller {
                 }
                 Some(0)
             }
-            crate::core::install::Plan::Bootstrap { source } => {
+            crate::core::install::Plan::Bootstrap { source }
+            | crate::core::install::Plan::Update { candidate: source } => {
+                // Replacing the exe under a running copy leaves it owning a file that no longer matches.
+                if let Some(pid) = crate::win::running_pid() {
+                    let _ = activate_process(pid);
+                    crate::win::shell::info_message(
+                        "Slate is already running",
+                        "Quit the open Slate, then run this download again to install it.",
+                    );
+                    return Some(0);
+                }
                 if let Err(err) = crate::win::update::bootstrap(&source) {
-                    crate::win::shell::info_message("First-run bootstrap failed", &err);
+                    crate::win::shell::info_message("Installing the release failed", &err);
                     return Some(1);
                 }
                 let _ = std::process::Command::new(config::canonical_exe_path())
                     .creation_flags(0)
                     .spawn();
-                Some(0)
-            }
-            crate::core::install::Plan::Update { candidate } => {
-                if let Err(err) = crate::win::update::refresh_install_from(&candidate) {
-                    crate::win::shell::info_message("Update from downloaded release failed", &err);
-                    return Some(1);
-                }
                 Some(0)
             }
             crate::core::install::Plan::Defer { canonical } => {
@@ -299,6 +301,14 @@ impl Controller {
     fn tick(&mut self, cx: &mut Context<Self>) -> bool {
         self.flush_save_error(cx);
         let mut changed = self.drain_events();
+        if let Some(chord) = crate::win::shortcut::take_failure() {
+            self.note_error(
+                format!("{chord} is already used by another app, so that shortcut is off."),
+                None,
+                cx,
+            );
+            changed = true;
+        }
         let shortcuts = self
             .shortcuts
             .as_ref()
@@ -341,13 +351,7 @@ impl Controller {
         let update_label = match &self.updater.state {
             UpdateState::Checking => SharedString::from("Checking for updates\u{2026}"),
             UpdateState::Available(version) => {
-                SharedString::from(format!("Update available: v{version}"))
-            }
-            UpdateState::Downloading(version, percent) => {
-                SharedString::from(format!("Downloading v{version}: {percent}%"))
-            }
-            UpdateState::Installing(version) => {
-                SharedString::from(format!("Restart to install v{version}"))
+                SharedString::from(format!("Open the download page for v{version}"))
             }
             UpdateState::UpToDate => SharedString::from("Slate is up to date"),
             UpdateState::Idle => SharedString::from("Check for updates"),
@@ -458,7 +462,7 @@ impl Controller {
         if let Some(highlight) = self.highlight.as_ref() {
             highlight.hide();
         }
-        // Everything is restored, so the crash payload must not be replayed by the janitor child.
+        // Everything is restored, so the recovery file must not be replayed at the next start.
         self.janitor.disarm();
         self.session_sig = self.session_signature();
     }
@@ -566,11 +570,12 @@ impl Controller {
 }
 /// Runs the install and update plan before any UI exists; Some means Slate must exit.
 pub fn startup() -> Option<i32> {
-    if let Some(code) = crate::win::update::recover_interrupted_update() {
+    // Installing runs first, so a downloaded release can replace the files before the old copy's lock is in the way.
+    if let Some(code) = Controller::execute_startup_plan(update::startup_install()) {
         return Some(code);
     }
     if !crate::win::instance::claim() {
         return Some(0);
     }
-    Controller::execute_startup_plan(update::startup_install())
+    None
 }

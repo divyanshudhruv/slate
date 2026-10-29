@@ -1,13 +1,19 @@
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+//! Tabs are switched with system hotkeys, registered only while one of our windows has focus.
+//! A global keyboard hook would see every key on the machine; this only ever hears its own chords.
 
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use std::sync::atomic::{AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{mpsc, Mutex};
+use std::thread::JoinHandle;
+
+use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL,
+    MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VIRTUAL_KEY, VK_CONTROL,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK,
-    KBDLLHOOKSTRUCT, LLKHF_ALTDOWN, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN,
-    WM_SYSKEYUP,
+    GetForegroundWindow, GetMessageW, PeekMessageW, PostThreadMessageW, EVENT_SYSTEM_FOREGROUND,
+    MSG, PM_NOREMOVE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_HOTKEY, WM_QUIT,
 };
 
 use crate::core::keys::Chord;
@@ -21,6 +27,7 @@ pub enum Shortcut {
     SelectIndex(u8),
 }
 
+#[derive(Clone, Copy)]
 struct Binding {
     shortcut: Shortcut,
     /// None means "any digit 1-9": the SelectTab action binds a family, not one key.
@@ -46,185 +53,216 @@ impl Binding {
     }
 }
 
-/// Fixed table the hook reads without locking; `set_bindings` only rewrites it.
-const BINDING_SLOTS: usize = 4;
-const VALID_BIT: u32 = 1 << 21;
-const DIGITS_BIT: u32 = 1 << 20;
+/// One system hotkey to hold while our windows are in front.
+#[derive(Clone, Copy)]
+struct Hotkey {
+    id: i32,
+    mods: HOT_KEY_MODIFIERS,
+    vk: u32,
+}
 
-static BINDINGS: [AtomicU32; BINDING_SLOTS] = [const { AtomicU32::new(0) }; BINDING_SLOTS];
-static BINDING_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-fn action_code(shortcut: Shortcut) -> u32 {
-    match shortcut {
-        Shortcut::NextTab => 0,
-        Shortcut::PrevTab => 1,
-        Shortcut::CloseTab => 2,
-        Shortcut::SelectIndex(_) => 3,
+impl PartialEq for Hotkey {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.mods.0 == other.mods.0 && self.vk == other.vk
     }
 }
 
-fn pack(binding: &Binding) -> u32 {
-    binding.vk.unwrap_or(0) as u32
-        | (binding.chord.ctrl as u32) << 16
-        | (binding.chord.shift as u32) << 17
-        | (binding.chord.alt as u32) << 18
-        | (binding.chord.win as u32) << 19
-        | (binding.digits as u32) << 20
-        | VALID_BIT
-        | action_code(binding.shortcut) << 22
+impl Eq for Hotkey {}
+
+const ID_NEXT: i32 = 1;
+const ID_PREV: i32 = 2;
+const ID_CLOSE: i32 = 3;
+/// Digit ids run 11 to 19, so the index is `id - 10`.
+const ID_DIGIT_BASE: i32 = 10;
+const VK_DIGIT_1: u32 = 0x31;
+
+fn hotkey_id(shortcut: Shortcut) -> Option<i32> {
+    match shortcut {
+        Shortcut::NextTab => Some(ID_NEXT),
+        Shortcut::PrevTab => Some(ID_PREV),
+        Shortcut::CloseTab => Some(ID_CLOSE),
+        Shortcut::SelectIndex(_) => None,
+    }
 }
 
-/// Swaps the table the hook reads; unbindable chords are dropped, so it matches the validated settings.
+fn action_for_id(id: i32) -> Option<Shortcut> {
+    match id {
+        ID_NEXT => Some(Shortcut::NextTab),
+        ID_PREV => Some(Shortcut::PrevTab),
+        ID_CLOSE => Some(Shortcut::CloseTab),
+        11..=19 => Some(Shortcut::SelectIndex((id - ID_DIGIT_BASE) as u8)),
+        _ => None,
+    }
+}
+
+fn modifiers(chord: Chord) -> HOT_KEY_MODIFIERS {
+    let mut mods = MOD_NOREPEAT;
+    if chord.ctrl {
+        mods |= MOD_CONTROL;
+    }
+    if chord.shift {
+        mods |= MOD_SHIFT;
+    }
+    if chord.alt {
+        mods |= MOD_ALT;
+    }
+    if chord.win {
+        mods |= MOD_WIN;
+    }
+    mods
+}
+
+/// Expands the binding table into the ids the system is asked to hold.
+fn hotkeys(table: &[Binding]) -> Vec<Hotkey> {
+    let mut out = Vec::new();
+    for binding in table {
+        let mods = modifiers(binding.chord);
+        if binding.digits {
+            for digit in 0..9u32 {
+                out.push(Hotkey {
+                    id: ID_DIGIT_BASE + 1 + digit as i32,
+                    mods,
+                    vk: VK_DIGIT_1 + digit,
+                });
+            }
+        } else if let Some(id) = hotkey_id(binding.shortcut) {
+            out.push(Hotkey {
+                id,
+                mods,
+                vk: binding.vk.unwrap_or(binding.chord.vk) as u32,
+            });
+        }
+    }
+    out
+}
+
+static BINDINGS: Mutex<Vec<Binding>> = Mutex::new(Vec::new());
+static OWNED: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+static THREAD_ID: AtomicU32 = AtomicU32::new(0);
+/// The first chord the system refused, held until the UI shows it once.
+static FAILED: Mutex<Option<String>> = Mutex::new(None);
+/// True once a refusal has been queued, so a failing re-register does not repeat the banner.
+static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Swaps the table the hotkey thread reads; unbindable chords are dropped, so it matches the validated settings.
 pub fn set_bindings(entries: &[(Shortcut, Chord)]) {
     let table: Vec<Binding> = entries
         .iter()
-        .filter_map(|(s, c)| Binding::new(*s, *c))
+        .filter_map(|(shortcut, chord)| Binding::new(*shortcut, *chord))
         .collect();
-    let count = table.len().min(BINDING_SLOTS);
-    for (slot, binding) in BINDINGS.iter().zip(table.iter()) {
-        slot.store(pack(binding), Ordering::Release);
-    }
-    BINDING_COUNT.store(count, Ordering::Release);
+    let mut current = BINDINGS.lock().unwrap_or_else(|e| e.into_inner());
+    *current = table;
+    drop(current);
+    wake();
 }
 
-/// How many yields an update gives a hook reader before it skips the write.
-const SPIN_LIMIT: usize = 10_000;
-
-/// Window set read by the hook while the UI thread updates it, without truncation.
-struct OwnedSet {
-    seq: AtomicUsize,
-    readers: AtomicUsize,
-    items: std::cell::UnsafeCell<Vec<isize>>,
-}
-
-unsafe impl Sync for OwnedSet {}
-
-impl OwnedSet {
-    const fn new() -> Self {
-        Self {
-            seq: AtomicUsize::new(0),
-            readers: AtomicUsize::new(0),
-            items: std::cell::UnsafeCell::new(Vec::new()),
-        }
-    }
-
-    fn set(&self, hwnds: impl IntoIterator<Item = isize>) {
-        let next: Vec<isize> = hwnds.into_iter().collect();
-        self.seq.fetch_add(1, Ordering::AcqRel);
-        // Bounded, so a delayed hook reader cannot stall the frame.
-        for _ in 0..SPIN_LIMIT {
-            if self.readers.load(Ordering::Acquire) == 0 {
-                unsafe {
-                    *self.items.get() = next;
-                }
-                self.seq.fetch_add(1, Ordering::Release);
-                return;
-            }
-            std::thread::yield_now();
-        }
-        // Never write while a reader is inside the table; skip this update instead.
-        self.seq.fetch_add(1, Ordering::Release);
-        tracing::warn!("owned-window update skipped: a hook reader held the table");
-    }
-
-    fn contains(&self, hwnd: isize) -> bool {
-        loop {
-            let seq = self.seq.load(Ordering::Acquire);
-            if seq & 1 != 0 {
-                std::hint::spin_loop();
-                continue;
-            }
-            self.readers.fetch_add(1, Ordering::AcqRel);
-            if self.seq.load(Ordering::Acquire) != seq {
-                self.readers.fetch_sub(1, Ordering::AcqRel);
-                continue;
-            }
-            let found = unsafe { (*self.items.get()).contains(&hwnd) };
-            self.readers.fetch_sub(1, Ordering::Release);
-            return found;
-        }
-    }
-}
-
-fn owned() -> &'static OwnedSet {
-    static OWNED: OwnedSet = OwnedSet::new();
-    &OWNED
-}
-
+/// Keeps the set of windows that may own the hotkeys, then asks the thread to re-check the foreground.
 pub fn set_owned(hwnds: impl IntoIterator<Item = isize>) {
-    owned().set(hwnds);
-}
-
-/// One bit per virtual key, so a held chord fires once and auto-repeat is dropped.
-static HELD_KEYS: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
-
-fn key_bit(vk: u16) -> (usize, u64) {
-    let word = (vk / 64) as usize;
-    (word.min(3), 1u64 << (vk % 64))
-}
-
-/// Returns true when the key was already down, which means this is an auto-repeat.
-fn key_down(vk: u16) -> bool {
-    let (word, bit) = key_bit(vk);
-    HELD_KEYS[word].fetch_or(bit, Ordering::AcqRel) & bit != 0
-}
-
-fn key_up(vk: u16) {
-    let (word, bit) = key_bit(vk);
-    HELD_KEYS[word].fetch_and(!bit, Ordering::AcqRel);
-}
-
-fn held(key: VIRTUAL_KEY) -> bool {
-    unsafe { GetAsyncKeyState(key.0 as i32) < 0 }
-}
-
-pub fn ctrl_held() -> bool {
-    held(VK_CONTROL)
-}
-
-fn modifiers_match(ctrl: bool, shift: bool, alt: bool, win: bool, alt_down: bool) -> bool {
-    ctrl == held(VK_CONTROL)
-        && shift == held(VK_SHIFT)
-        && alt == (alt_down || held(VK_MENU))
-        && win == (held(VK_LWIN) || held(VK_RWIN))
-}
-
-fn match_shortcut(vk: u16, alt_down: bool) -> Option<Shortcut> {
-    let count = BINDING_COUNT.load(Ordering::Acquire).min(BINDING_SLOTS);
-    for slot in BINDINGS.iter().take(count) {
-        let bits = slot.load(Ordering::Acquire);
-        if bits & VALID_BIT == 0 {
-            continue;
+    let next: Vec<isize> = hwnds.into_iter().collect();
+    let changed = {
+        let mut owned = OWNED.lock().unwrap_or_else(|e| e.into_inner());
+        if *owned == next {
+            false
+        } else {
+            *owned = next;
+            true
         }
-        let digits = bits & DIGITS_BIT != 0;
-        if digits {
-            if !(0x31..=0x39).contains(&vk) {
-                continue;
-            }
-        } else if (bits & 0xFFFF) as u16 != vk {
-            continue;
-        }
-        if !modifiers_match(
-            bits & (1 << 16) != 0,
-            bits & (1 << 17) != 0,
-            bits & (1 << 18) != 0,
-            bits & (1 << 19) != 0,
-            alt_down,
-        ) {
-            continue;
-        }
-        return match (bits >> 22) & 0x3 {
-            0 => Some(Shortcut::NextTab),
-            1 => Some(Shortcut::PrevTab),
-            2 => Some(Shortcut::CloseTab),
-            3 => Some(Shortcut::SelectIndex((vk - 0x31 + 1) as u8)),
-            _ => None,
-        };
+    };
+    if changed {
+        wake();
     }
-    None
 }
 
-/// Single-producer ring between the hook and the UI; no locks in the hook path.
+/// Wakes the hotkey thread; a missing id means it is not running, so there is nothing to tell.
+fn wake() {
+    let id = THREAD_ID.load(Ordering::Acquire);
+    if id != 0 {
+        unsafe {
+            let _ = PostThreadMessageW(id, WM_APP + 1, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+fn foreground_owned() -> bool {
+    let hwnd = unsafe { GetForegroundWindow() }.0 as isize;
+    if hwnd == 0 {
+        return false;
+    }
+    OWNED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(&hwnd)
+}
+
+/// Re-registers only when the wanted set changed, so a wake costs one comparison.
+fn sync(held: &mut Vec<Hotkey>, wanted: &[Hotkey]) {
+    if held.as_slice() == wanted {
+        return;
+    }
+    for hotkey in held.iter() {
+        unsafe {
+            let _ = UnregisterHotKey(None, hotkey.id);
+        }
+    }
+    held.clear();
+    let mut refused: Option<String> = None;
+    for hotkey in wanted {
+        match unsafe { RegisterHotKey(None, hotkey.id, hotkey.mods, hotkey.vk) } {
+            Ok(()) => held.push(*hotkey),
+            Err(err) => {
+                tracing::warn!("shortcut {} could not be registered: {err}", hotkey.id);
+                refused.get_or_insert_with(|| describe(hotkey));
+            }
+        }
+    }
+    if refused.is_none() {
+        // Every chord is ours again, so a later conflict deserves its own notice.
+        WARNED.store(false, Ordering::Release);
+        return;
+    }
+    if !WARNED.swap(true, Ordering::AcqRel) {
+        *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = refused;
+    }
+}
+
+/// A chord the system refused, for the UI to turn into a one-time banner.
+pub fn take_failure() -> Option<String> {
+    FAILED.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// The system's view of a chord, in the same order the settings file writes it.
+fn describe(hotkey: &Hotkey) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (bit, name) in [
+        (MOD_CONTROL, "ctrl"),
+        (MOD_SHIFT, "shift"),
+        (MOD_ALT, "alt"),
+        (MOD_WIN, "win"),
+    ] {
+        if hotkey.mods & bit == bit {
+            parts.push(name.to_string());
+        }
+    }
+    let key = crate::core::keys::name_for(hotkey.vk as u16)
+        .unwrap_or_else(|| format!("key {}", hotkey.vk));
+    parts.push(key);
+    parts.join("+")
+}
+
+/// Any foreground change is enough to re-check whether the hotkeys should be held.
+unsafe extern "system" fn foreground_proc(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: windows::Win32::Foundation::HWND,
+    _idobject: i32,
+    _idchild: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    wake();
+}
+
+/// Single-producer ring between the hotkey thread and the UI; no locks on either side.
 const QUEUE_LEN: usize = 64;
 static QUEUE_SLOTS: [AtomicU8; QUEUE_LEN] = [const { AtomicU8::new(0) }; QUEUE_LEN];
 static QUEUE_HEAD: AtomicUsize = AtomicUsize::new(0);
@@ -274,39 +312,80 @@ fn take_all() -> Vec<Shortcut> {
     out
 }
 
-unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 {
-        let message = wparam.0 as u32;
-        let keyboard = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        let vk = keyboard.vkCode as u16;
-        if message == WM_KEYUP || message == WM_SYSKEYUP {
-            key_up(vk);
-        } else if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
-            let repeat = key_down(vk);
-            let alt_held = keyboard.flags.0 & LLKHF_ALTDOWN.0 != 0;
-            if let Some(shortcut) = match_shortcut(vk, alt_held) {
-                let foreground = unsafe { GetForegroundWindow() }.0 as isize;
-                if owned().contains(foreground) {
-                    if !repeat {
-                        push(shortcut);
-                    }
-                    return LRESULT(1);
-                }
+fn run(ready: mpsc::Sender<u32>) {
+    let id = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+    // Peeking first gives the thread a message queue, so every later wake has somewhere to land.
+    let mut msg = MSG::default();
+    unsafe {
+        let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
+    }
+    let hook = unsafe {
+        SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(foreground_proc),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        )
+    };
+    THREAD_ID.store(id, Ordering::Release);
+    let _ = ready.send(id);
+
+    let mut held: Vec<Hotkey> = Vec::new();
+    loop {
+        let wanted = if foreground_owned() {
+            let table = BINDINGS.lock().unwrap_or_else(|e| e.into_inner());
+            hotkeys(&table)
+        } else {
+            Vec::new()
+        };
+        sync(&mut held, &wanted);
+
+        let mut msg = MSG::default();
+        let result = unsafe { GetMessageW(&mut msg, None, 0, 0) };
+        if result.0 <= 0 {
+            break;
+        }
+        if msg.message == WM_HOTKEY {
+            if let Some(shortcut) = action_for_id(msg.wParam.0 as i32) {
+                push(shortcut);
             }
         }
+        // Any other message, including our own wake, just re-checks the foreground.
     }
-    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+
+    for hotkey in held {
+        unsafe {
+            let _ = UnregisterHotKey(None, hotkey.id);
+        }
+    }
+    if !hook.0.is_null() {
+        unsafe {
+            let _ = UnhookWinEvent(hook);
+        }
+    }
+    THREAD_ID.store(0, Ordering::Release);
 }
 
 pub struct ShortcutCapture {
-    hook: HHOOK,
+    thread: u32,
+    handle: Option<JoinHandle<()>>,
 }
 
 impl ShortcutCapture {
     pub fn install() -> Option<Self> {
-        let hook =
-            unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), None, 0) }.ok()?;
-        Some(Self { hook })
+        let (ready, ready_rx) = mpsc::channel();
+        let handle = std::thread::Builder::new()
+            .name("slate-hotkeys".into())
+            .spawn(move || run(ready))
+            .ok()?;
+        let thread = ready_rx.recv().ok()?;
+        Some(Self {
+            thread,
+            handle: Some(handle),
+        })
     }
 
     pub fn drain(&self) -> Vec<Shortcut> {
@@ -317,9 +396,20 @@ impl ShortcutCapture {
 impl Drop for ShortcutCapture {
     fn drop(&mut self) {
         unsafe {
-            let _ = UnhookWindowsHookEx(self.hook);
+            let _ = PostThreadMessageW(self.thread, WM_QUIT, WPARAM(0), LPARAM(0));
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
         }
     }
+}
+
+fn held(key: VIRTUAL_KEY) -> bool {
+    unsafe { GetAsyncKeyState(key.0 as i32) < 0 }
+}
+
+pub fn ctrl_held() -> bool {
+    held(VK_CONTROL)
 }
 
 #[cfg(test)]
@@ -337,22 +427,47 @@ mod tests {
     }
 
     #[test]
-    fn pack_keeps_the_key_modifiers_and_action() {
-        let binding = Binding::new(Shortcut::CloseTab, chord(0x57, true, false)).unwrap();
-        let bits = pack(&binding);
-        assert_eq!(bits & 0xFFFF, 0x57);
-        assert_ne!(bits & (1 << 16), 0);
-        assert_eq!(bits & (1 << 17), 0);
-        assert_ne!(bits & VALID_BIT, 0);
-        assert_eq!((bits >> 22) & 0x3, 2);
+    fn each_action_gets_a_stable_id_and_back() {
+        for shortcut in [Shortcut::NextTab, Shortcut::PrevTab, Shortcut::CloseTab] {
+            let id = hotkey_id(shortcut).expect("id");
+            assert_eq!(action_for_id(id), Some(shortcut));
+        }
+        assert_eq!(action_for_id(11), Some(Shortcut::SelectIndex(1)));
+        assert_eq!(action_for_id(19), Some(Shortcut::SelectIndex(9)));
+        assert_eq!(action_for_id(0), None);
+        assert_eq!(action_for_id(10), None);
+        assert_eq!(action_for_id(20), None);
     }
 
     #[test]
-    fn digit_bindings_cover_the_whole_family() {
-        let binding = Binding::new(Shortcut::SelectIndex(1), chord(0x31, true, false)).unwrap();
-        let bits = pack(&binding);
-        assert_ne!(bits & DIGITS_BIT, 0);
-        assert_eq!((bits >> 22) & 0x3, 3);
+    fn chord_modifiers_become_system_modifiers() {
+        let mods = modifiers(chord(0x57, true, false));
+        assert_eq!(mods & MOD_CONTROL, MOD_CONTROL);
+        assert_eq!(mods & MOD_SHIFT, HOT_KEY_MODIFIERS(0));
+        assert_eq!(mods & MOD_NOREPEAT, MOD_NOREPEAT);
+    }
+
+    #[test]
+    fn digit_bindings_expand_to_the_whole_family() {
+        let table = vec![Binding::new(Shortcut::SelectIndex(1), chord(0x31, true, false)).unwrap()];
+        let keys = hotkeys(&table);
+        assert_eq!(keys.len(), 9);
+        assert_eq!(keys[0].id, 11);
+        assert_eq!(keys[0].vk, 0x31);
+        assert_eq!(keys[8].id, 19);
+        assert_eq!(keys[8].vk, 0x39);
+    }
+
+    #[test]
+    fn plain_bindings_map_one_to_one() {
+        let table = vec![
+            Binding::new(Shortcut::CloseTab, chord(0x57, true, false)).unwrap(),
+            Binding::new(Shortcut::NextTab, chord(0x09, true, false)).unwrap(),
+        ];
+        let keys = hotkeys(&table);
+        assert_eq!(keys.len(), 2);
+        assert_eq!((keys[0].id, keys[0].vk), (ID_CLOSE, 0x57));
+        assert_eq!((keys[1].id, keys[1].vk), (ID_NEXT, 0x09));
     }
 
     #[test]
@@ -372,24 +487,25 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_chord_is_described_like_the_settings_file() {
+        let shape = Hotkey {
+            id: ID_NEXT,
+            mods: modifiers(chord(0x09, true, true)),
+            vk: 0x09,
+        };
+        assert_eq!(describe(&shape), "ctrl+shift+tab");
+    }
+
+    #[test]
     fn invalid_chords_are_not_packed() {
         assert!(Binding::new(Shortcut::NextTab, chord(0, false, false)).is_none());
     }
 
     #[test]
-    fn repeats_are_reported_once_until_the_key_lifts() {
-        assert!(!key_down(0x41));
-        assert!(key_down(0x41));
-        key_up(0x41);
-        assert!(!key_down(0x41));
-        key_up(0x41);
-    }
-
-    #[test]
-    fn owned_set_is_not_truncated() {
+    fn the_owned_set_replaces_rather_than_appends() {
         set_owned(1..=2_000);
-        assert!(owned().contains(1));
-        assert!(owned().contains(2_000));
-        assert!(!owned().contains(0));
+        assert!(OWNED.lock().unwrap().contains(&2_000));
+        set_owned([7]);
+        assert_eq!(*OWNED.lock().unwrap(), vec![7]);
     }
 }

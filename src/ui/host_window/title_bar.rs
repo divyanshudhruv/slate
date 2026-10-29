@@ -127,9 +127,7 @@ fn chord_any_digit(source: &str) -> String {
 fn update_state(state: &UpdateState) -> (IconName, bool, bool) {
     match state {
         UpdateState::Checking => (IconName::RefreshCw, true, false),
-        UpdateState::Available(_) => (IconName::Download, false, true),
-        UpdateState::Downloading(_, _) => (IconName::Download, true, false),
-        UpdateState::Installing(_) => (IconName::CircleCheck, true, true),
+        UpdateState::Available(_) => (IconName::ExternalLink, false, true),
         UpdateState::UpToDate => (IconName::CircleCheck, true, false),
         UpdateState::Idle => (IconName::RefreshCw, false, false),
         UpdateState::Failed => (IconName::TriangleAlert, false, false),
@@ -213,7 +211,7 @@ fn app_menu(controller: &Entity<Controller>, info: &HostInfo) -> Menu {
                 .disabled(update_disabled)
                 .on_click(overlay_action(controller, move || {
                     if update_available {
-                        Cmd::BannerAction(BannerAction::InstallUpdate)
+                        Cmd::BannerAction(BannerAction::OpenReleasePage)
                     } else {
                         Cmd::CheckForUpdates { force: true }
                     }
@@ -463,17 +461,9 @@ mod tests {
             "a check in flight spins and cannot be started again"
         );
         assert_eq!(
-            update_state(&UpdateState::Downloading("1.0.0".into(), 40)),
-            (IconName::Download, true, false)
-        );
-        assert_eq!(
             update_state(&UpdateState::Available("1.0.0".into())),
-            (IconName::Download, false, true),
-            "an available update can be downloaded"
-        );
-        assert_eq!(
-            update_state(&UpdateState::Installing("1.0.0".into())),
-            (IconName::CircleCheck, true, true)
+            (IconName::ExternalLink, false, true),
+            "an available update opens the download page"
         );
         assert_eq!(
             update_state(&UpdateState::UpToDate),

@@ -48,11 +48,11 @@
 
 **`5. Hover preview`** - rest on a tab for a live snapshot of its window
 
-**`6. Global shortcuts`** - `Ctrl`+`Tab`, `Ctrl`+`Shift`+`Tab`, `Ctrl`+`1..9` and `Ctrl`+`W` work while a hosted window has focus
+**`6. Shortcuts`** - `Ctrl`+`Tab`, `Ctrl`+`Shift`+`Tab`, `Ctrl`+`1..9` and `Ctrl`+`W` work while Slate has focus
 
 **`7. Tray icon`** - restore the host or exit from the notification area
 
-**`8. Self-updating`** - in-app updates with mandatory SHA256 verification and automatic rollback
+**`8. Update check`** - tells you when a newer release is out and links to its download page; Slate never downloads or replaces itself
 
 **`9. Light and dark themes`** - the theme button cycles system, dark, and light
 
@@ -202,13 +202,11 @@ The binary lands in `target\release\slate.exe`. For the development workflow, se
 | `%LOCALAPPDATA%\Burntfern\Slate\settings.json` | Theme, accent, tab, preview, and shortcut settings |
 | `%LOCALAPPDATA%\Burntfern\Slate\sets.json` | Saved tab sets |
 | `%LOCALAPPDATA%\Burntfern\Slate\session.json` | Tabs restored on the next launch |
-| `%LOCALAPPDATA%\Burntfern\Slate\install.json` | Registered copy (path, version, pid) used by updates and single-instance checks |
+| `%LOCALAPPDATA%\Burntfern\Slate\install.json` | Registered copy (path, version, pid) used by release installs and single-instance checks |
 | `%LOCALAPPDATA%\Burntfern\Slate\instance.pid` | Pid of the copy that owns this data folder |
-| `%LOCALAPPDATA%\Burntfern\Slate\update-pending.json` | Written before a swap, cleared on the first frame; a build that never starts is rolled back |
-| `%LOCALAPPDATA%\Burntfern\Slate\janitor.key` | DPAPI-protected key that signs the janitor payload |
-| `%LOCALAPPDATA%\Burntfern\Slate\janitor-<pid>.bin` | Windows a dead Slate owned, replayed on the next launch |
+| `%LOCALAPPDATA%\Burntfern\Slate\recovery-<pid>.json` | Windows a dead Slate owned, replayed on the next launch |
 | `%LOCALAPPDATA%\Burntfern\Slate\logs\` | Daily logs, last 7 kept |
-| `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Downloaded updates and swap staging |
+| `%LOCALAPPDATA%\Burntfern\Slate\updates\` | Staging for a downloaded release while it installs itself |
 | `%LOCALAPPDATA%\Burntfern\Slate\backups\` | Backups |
 
 Portable mode: set `SLATE_PORTABLE=1` or place `slate.portable` next to the exe to keep settings, sets, session, updates, and logs in `data\` beside it.

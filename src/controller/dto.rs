@@ -166,9 +166,8 @@ pub struct TabInfo {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BannerAction {
-    InstallUpdate,
+    OpenReleasePage,
     RetryUpdateCheck,
-    RestartUpdate,
 }
 
 /// What a banner says, and which surface renders it.

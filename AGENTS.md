@@ -19,7 +19,7 @@ cargo build --locked
 - `src/core/` - pure state (groups, tabs, saved sets, install/update planning) + tests
 - `src/config/` - settings/load/save/schema for `%LOCALAPPDATA%\Burntfern\Slate\`, seeded from `configs/`
 - `src/controller/` - `Cmd` dispatch and UI snapshot; owns the win layer
-- `src/win/` - Win32 (enumeration, hooks, host lifecycle, janitor, tray, icons, capture, self-update)
+- `src/win/` - Win32 (enumeration, hotkeys, host lifecycle, crash recovery, tray, icons, capture, release install)
 - `src/ui/` - gpui views (host window, tab bar, overlays, panels)
 
 ## Rules
@@ -35,6 +35,7 @@ cargo build --locked
 - Windows only. Uses Win32 window ownership, DWM frame control, GDI icon extraction.
 - Elevated windows only hosted if Slate is elevated. Slate never launches apps, only hosts running ones.
 - Hosted windows draw above the host, so Slate menus can be covered by the active member.
-- Crash recovery is deferred: `Janitor::persist` writes a signed payload while members are hosted, and `sweep_stale` replays it at the next start. There is no child process.
-- `slate.exe` has one hidden mode, `--swap-helper` (see `src/win/update.rs`). `src/main.rs` must return from it before `win::keys::install()` and `controller::startup()` so the helper never installs hooks or runs the install plan.
-- The global shortcut hook is installed only while a member is hosted (`Controller::sync_worker`), not at startup.
+- Crash recovery is deferred: `Janitor::persist` writes `recovery-<pid>.json` (plain JSON) while members are hosted, and `sweep_stale` replays it at the next start. There is no child process.
+- The window picker hook (`src/win/pick.rs`) is the only keyboard hook left; it is installed only while a pick is in flight and only acts when Slate has focus.
+- System hotkeys are registered only while one of Slate's windows has focus (`Controller::sync_worker` plus the foreground hook in `src/win/shortcut.rs`), and they are unregistered the moment focus leaves.
+- The update check is a read-only GitHub API call; Slate never downloads a release. Running a downloaded release installs it (`bootstrap`) and relaunches, and that refuses to run while another copy owns the data folder.
