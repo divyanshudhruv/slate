@@ -68,6 +68,32 @@ jobs:
           "asset_name=$env:BIN-$tag-x64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
           "asset_name_arm64=$env:BIN-$tag-arm64" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding ascii
 
+      # A build that Windows Defender flags is not worth publishing. Only a real
+      # detection (exit code 2) fails the job; a runner with no Defender, or with
+      # the service stopped, is reported and skipped.
+      - name: Scan with Defender
+        shell: pwsh
+        run: |
+          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          if (-not (Test-Path $mp)) {
+            Write-Host "MpCmdRun.exe not found; skipping the Defender smoke test"
+            exit 0
+          }
+          $flagged = @()
+          foreach ($name in @("${{ env.asset_name }}.exe", "${{ env.asset_name_arm64 }}.exe")) {
+            $file = (Get-Item $name).FullName
+            & $mp -Scan -ScanType 3 -File $file -DisableRemediation -Timeout 10
+            if ($LASTEXITCODE -eq 2) {
+              $flagged += $name
+            } else {
+              Write-Host "Defender found no threat in $name (exit $LASTEXITCODE)"
+            }
+          }
+          if ($flagged.Count -gt 0) {
+            Write-Host "Defender flagged: $($flagged -join ', ')"
+            exit 1
+          }
+
       - name: Upload to release
         if: github.event_name == 'release'
         shell: pwsh
