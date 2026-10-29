@@ -3,12 +3,8 @@ mod wire;
 use std::path::{Path, PathBuf};
 
 use windows::Win32::Foundation::{CloseHandle, HWND, WAIT_EVENT};
-use windows::Win32::System::Threading::{
-    OpenProcess, WaitForSingleObject, CREATE_NO_WINDOW, INFINITE, PROCESS_SYNCHRONIZE,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, IsWindow, ShowWindow, GWL_HWNDPARENT, SW_HIDE,
-};
+use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, IsWindow, GWL_HWNDPARENT};
 
 use super::host::{unregister_member, StylingState};
 pub use wire::{decode, encode};
@@ -16,7 +12,6 @@ pub use wire::{decode, encode};
 #[derive(Default)]
 pub struct Janitor {
     path: Option<PathBuf>,
-    started: bool,
     last: Option<Vec<u8>>,
 }
 
@@ -26,12 +21,11 @@ impl Janitor {
         sweep_stale();
         Self {
             path: Some(state_path()),
-            started: false,
             last: None,
         }
     }
 
-    /// Drops the payload after a clean restore, so the child janitor has nothing left to replay.
+    /// Drops the payload after a clean restore, so the next launch has nothing left to replay.
     pub fn disarm(&mut self) {
         if let Some(path) = self.path.take() {
             let _ = std::fs::remove_file(path);
@@ -49,10 +43,6 @@ impl Janitor {
         let bytes = encode(&key, slate_hwnd, members);
         if self.last.as_deref() == Some(bytes.as_slice()) {
             return;
-        }
-        if !self.started {
-            spawn(&path);
-            self.started = true;
         }
         if write(&path, &bytes) {
             self.last = Some(bytes);
@@ -183,19 +173,6 @@ fn free_blob(blob: &windows::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB) 
     }
 }
 
-pub fn spawn(path: &Path) {
-    use std::os::windows::process::CommandExt;
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let _ = std::process::Command::new(exe)
-        .arg("--janitor")
-        .arg(path)
-        .arg(std::process::id().to_string())
-        .creation_flags(CREATE_NO_WINDOW.0)
-        .spawn();
-}
-
 pub fn sweep_stale() {
     let dir = crate::config::paths::data_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -269,42 +246,6 @@ pub fn write(path: &Path, bytes: &[u8]) -> bool {
         return false;
     }
     std::fs::rename(&tmp, path).is_ok()
-}
-
-pub fn run(path: PathBuf, pid: u32) {
-    if pid == 0 {
-        return;
-    }
-    hide_console();
-    let _ = watch(pid);
-    let mut complete = true;
-    if let Ok(bytes) = std::fs::read(&path) {
-        complete = restore(&bytes).complete;
-    }
-    if complete {
-        let _ = std::fs::remove_file(&path);
-    } else {
-        quarantine(&path);
-    }
-}
-
-fn hide_console() {
-    use windows::Win32::System::Console::GetConsoleWindow;
-    unsafe {
-        let console = GetConsoleWindow();
-        if !console.0.is_null() {
-            let _ = ShowWindow(console, SW_HIDE);
-        }
-    }
-}
-
-fn watch(pid: u32) -> windows::core::Result<()> {
-    unsafe {
-        let handle = OpenProcess(PROCESS_SYNCHRONIZE, false, pid)?;
-        WaitForSingleObject(handle, INFINITE);
-        let _ = CloseHandle(handle);
-    }
-    Ok(())
 }
 
 struct RestoreOutcome {

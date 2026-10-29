@@ -4,7 +4,7 @@ use super::dto::BannerKind;
 use super::Controller;
 use crate::win::{
     content_rect_screen, ctrl_held, enumerate_windows, is_blacklisted, slate_elevated, window_rect,
-    window_under_cursor, Highlight, KeyboardCapture, PickKey,
+    window_title, window_under_cursor, Highlight, KeyboardCapture, PickKey,
 };
 
 impl Controller {
@@ -13,8 +13,12 @@ impl Controller {
         self.end_pick();
         self.picking = true;
         self.capture = KeyboardCapture::install();
+        tracing::debug!(
+            "pick: started, keyboard hook installed: {}",
+            self.capture.is_some()
+        );
         if self.highlight.is_none() {
-            self.highlight = Highlight::new();
+            self.highlight = Highlight::new(self.highlight_color);
         }
         self.show_banner(BannerKind::Pick, None, cx);
         self.pick_gen = self.pick_gen.wrapping_add(1);
@@ -43,6 +47,7 @@ impl Controller {
             .map(KeyboardCapture::drain)
             .unwrap_or_default();
         if let Some(key) = keys.into_iter().next() {
+            tracing::debug!("pick: {key:?} pressed, hovered was {:?}", self.hovered);
             match key {
                 PickKey::Tab => self.commit_pick(),
                 PickKey::Escape => self.end_pick(),
@@ -52,8 +57,15 @@ impl Controller {
             cx.notify();
             return true;
         }
-        let hovered =
-            window_under_cursor().filter(|hwnd| self.windows.iter().any(|w| w.hwnd == *hwnd));
+        let raw = window_under_cursor();
+        let hovered = raw.filter(|hwnd| self.windows.iter().any(|w| w.hwnd == *hwnd));
+        tracing::debug!(
+            "pick: cursor over {raw:?} {:?}, {} candidates, hovered {hovered:?} (was {:?}), hook {}",
+            raw.map(window_title),
+            self.windows.len(),
+            self.hovered,
+            self.capture.is_some()
+        );
         if self.hovered != hovered {
             self.hovered = hovered;
             self.update_highlight();
@@ -119,7 +131,7 @@ impl Controller {
     pub(super) fn update_drag_highlight(&mut self) {
         if self.drag_active {
             if self.highlight.is_none() {
-                self.highlight = Highlight::new();
+                self.highlight = Highlight::new(self.highlight_color);
             }
             if let (Some(highlight), Some(host)) = (self.highlight.as_ref(), self.host_hwnd) {
                 if let Some((x, y, w, h)) = content_rect_screen(host, self.titlebar) {

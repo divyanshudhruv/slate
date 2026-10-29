@@ -63,8 +63,8 @@ pub fn init() {
         .with_ansi(false)
         .with_target(true)
         .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false);
+        .with_file(true)
+        .with_line_number(true);
 
     let _ = tracing_subscriber::registry()
         .with(env_filter)

@@ -1,8 +1,8 @@
 use super::Controller;
 use crate::core::Effect;
 use crate::win::{
-    activate_window, enumerate_windows, set_owned, window_title, StylingState, WinEvent,
-    WinEventPump,
+    activate_window, enumerate_windows, set_owned, window_title, ShortcutCapture, StylingState,
+    WinEvent, WinEventPump,
 };
 
 impl Controller {
@@ -116,6 +116,12 @@ impl Controller {
         let members: Vec<(isize, StylingState)> =
             self.styling.iter().map(|(k, v)| (*k, v.clone())).collect();
         self.janitor.persist(host, &members);
+        // The shortcut hook only does anything while a member is focused, so it is installed with the first one and dropped with the last.
+        if self.styling.is_empty() {
+            self.shortcuts = None;
+        } else if self.shortcuts.is_none() {
+            self.shortcuts = ShortcutCapture::install();
+        }
         set_owned(
             std::iter::once(host)
                 .chain(self.styling.keys().copied())
